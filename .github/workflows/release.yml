@@ -204,7 +204,27 @@ jobs:
           cache-disabled: true
 
       - name: Build
-        run: ./gradlew assembleFoss -Penable-updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_log="$RUNNER_TEMP/koharia-foss-build.log"
+          refresh_args=()
+          for attempt in 1 2 3; do
+            set +e
+            ./gradlew assembleFoss -Penable-updater "${refresh_args[@]}" 2>&1 | tee "$build_log"
+            build_status=${PIPESTATUS[0]}
+            set -e
+            if [[ "$build_status" -eq 0 ]]; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]] || ! grep -Eq 'Could not (resolve|find|GET|HEAD)|Could not download|Could not get resource' "$build_log"; then
+              exit "$build_status"
+            fi
+            echo "::warning::FOSS dependency retrieval failed (attempt $attempt/3); retrying with refreshed dependencies."
+            # Gradle can cache missing JitPack artifacts after a transient repository failure.
+            refresh_args=(--refresh-dependencies)
+            sleep 15
+          done
 
       - name: Verify unsigned APK output
         env:
