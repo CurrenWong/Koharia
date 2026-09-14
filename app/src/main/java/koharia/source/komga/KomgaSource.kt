@@ -89,6 +89,7 @@ class KomgaSource(
     ConfigurableSource,
     UnmeteredSource,
     ConnectionSource,
+    koharia.connection.ConnectionBackupRestoreAdapter,
     ConnectionBrowseAdapter,
     ConnectionPageAdapter,
     ConnectionAccountAdapter,
@@ -190,17 +191,35 @@ class KomgaSource(
     private val chapterNameTemplate: String
         get() = preferences.getString(PREF_CHAPTER_NAME_TEMPLATE, PREF_CHAPTER_NAME_TEMPLATE_DEFAULT)!!
 
-    private val searchCapabilities = KomgaSearchCapabilities()
+    private val searchCapabilities = KomgaSearchCapabilities(
+        readLegacy = {
+            shelfStateStore().read("legacySearch")?.split(',')?.filter(String::isNotBlank)?.toSet().orEmpty()
+        },
+        writeLegacy = { shelfStateStore().write("legacySearch", it.joinToString(",")) },
+    )
+
+    private fun shelfStateStore() = koharia.connection.ConnectionShelfStateStore(application, shelfCacheNamespace())
     private val apiClient: KomgaApiClient
-        get() = KomgaApiClient(baseUrl, currentHeaders(), client, json, searchCapabilities)
+        get() = KomgaApiClient(baseUrl, currentHeaders(), client, json, searchCapabilities) { request ->
+            metadataCacheStore.load(
+                request,
+                maxOf(browseRefreshRequestedAt.get(), koharia.connection.ConnectionShelfUpdates.version(id)),
+            )
+        }
 
     private val repository: KomgaRepository
         get() = KomgaRepository(baseUrl, apiClient)
-    private val metadataCacheStore by lazy { KomgaMetadataCacheStore(application.applicationContext) }
+    private val metadataCacheStore by lazy {
+        KomgaMetadataCacheStore(application.applicationContext, ::shelfCacheNamespace)
+    }
     private val scopedBasePreferences by lazy {
         Injekt.get<KomgaScopedPreferenceStoreFactory>().basePreferences(id)
     }
-    private val forceBrowseRequestsUntil = AtomicLong(0L)
+    private val browseRefreshRequestedAt = AtomicLong(0L)
+
+    fun shelfCacheNamespace(): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest("$id|$baseUrl|$authMode|$username|$password|$apiKey".toByteArray())
+        .joinToString("") { "%02x".format(it) }
 
     fun currentHeaders(): Headers = headersBuilder().build()
 
@@ -228,8 +247,12 @@ class KomgaSource(
         }
 
     override val client = super.client.newBuilder()
-        .addInterceptor(KomgaOfflineInterceptor(application) { scopedBasePreferences.downloadedOnly.get() })
-        .addNetworkInterceptor(KomgaCacheControlInterceptor(application))
+        .addInterceptor(
+            KomgaOfflineInterceptor(application, ::shelfCacheNamespace, {
+                maxOf(browseRefreshRequestedAt.get(), koharia.connection.ConnectionShelfUpdates.version(id))
+            }) { scopedBasePreferences.downloadedOnly.get() },
+        )
+        .addInterceptor(KomgaCacheControlInterceptor(application, ::shelfCacheNamespace))
         .addInterceptor { chain ->
             val original = chain.request()
             val newBuilder = original.newBuilder()
@@ -416,8 +439,13 @@ class KomgaSource(
         Injekt.get<eu.kanade.tachiyomi.data.track.komga.KomgaProgressSyncService>().syncFromServer(manga)
     }
 
+    override suspend fun prepareReadingStateRestore(chapterUrls: List<String>) {
+        chapterUrls.forEach { eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, it) }
+    }
+
     override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {
         if (!apiClient.isBook(chapterUrl)) return
+        eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, chapterUrl)
         apiClient.setBookReadStatus(chapterUrl, read)
         Injekt.get<TrackerManager>().komga.api.invalidateProgressCache(id)
     }
@@ -1228,7 +1256,7 @@ class KomgaSource(
     }
 
     fun refreshBrowseRequests() {
-        forceBrowseRequestsUntil.set(System.currentTimeMillis() + BROWSE_REFRESH_WINDOW_MILLIS)
+        browseRefreshRequestedAt.set(System.currentTimeMillis())
     }
 
     fun configuredShelfLibraryIds(): Set<String> = shelfLibraryIds.toSet()
@@ -1386,13 +1414,7 @@ class KomgaSource(
         }
     }
 
-    private fun consumeBrowseCachePolicy(): KomgaCachePolicy {
-        return if (System.currentTimeMillis() <= forceBrowseRequestsUntil.get()) {
-            KomgaCachePolicy.NetworkFirst
-        } else {
-            KomgaCachePolicy.Default
-        }
-    }
+    private fun consumeBrowseCachePolicy(): KomgaCachePolicy = KomgaCachePolicy.Default
 
     override fun chapterPageParse(response: Response) = throw UnsupportedOperationException()
 
@@ -1414,7 +1436,6 @@ class KomgaSource(
         const val TYPE_READ_LISTS = "Read lists"
         const val TYPE_BOOKS = "Books"
         const val TYPE_ALL = "All"
-        private const val BROWSE_REFRESH_WINDOW_MILLIS = 30_000L
 
         private val SERVER_SETTING_KEYS = setOf(
             PREF_SERVER_PROFILE_NAME,

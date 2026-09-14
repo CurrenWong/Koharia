@@ -476,7 +476,7 @@ data class LocalLibraryScreen(
                             TextButton(
                                 onClick = {
                                     screenModel.dismissDialog()
-                                    navigator.push(SeriesMetadataEditScreen(dialog.manga))
+                                    navigator.push(SeriesMetadataEditScreen(dialog.manga.id))
                                 },
                             ) {
                                 Text(text = stringResource(MR.strings.local_library_edit_item_details))

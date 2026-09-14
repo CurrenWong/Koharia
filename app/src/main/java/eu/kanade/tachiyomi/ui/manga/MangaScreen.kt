@@ -154,7 +154,7 @@ class MangaScreen(
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
             onDownloadActionClicked = screenModel::runDownloadAction.takeIf { allowsChapterDownloads },
             onEditSeriesDetailsClicked = {
-                navigator.push(SeriesMetadataEditScreen(successState.manga))
+                navigator.push(SeriesMetadataEditScreen(successState.manga.id))
             }.takeIf { successState.source is ConnectionMetadataAdapter },
             onEditCategoryClicked = when {
                 successState.source is ConnectionLibraryShelfAdapter -> {

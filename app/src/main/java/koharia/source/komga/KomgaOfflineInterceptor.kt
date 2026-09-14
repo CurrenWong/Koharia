@@ -14,14 +14,19 @@ import java.util.concurrent.TimeUnit
 
 class KomgaOfflineInterceptor(
     private val context: Context,
+    private val namespace: () -> String = { "" },
+    private val minimumFetchedAt: () -> Long = { 0L },
     private val cachedOnlyProvider: () -> Boolean,
 ) : Interceptor {
-    private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext)
+    private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext, namespace)
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
         val cachedOnly = cachedOnlyProvider()
         val canUseNetwork = shouldUseKomgaNetwork(cachedOnly, context.isOnline())
+        if (!canUseNetwork || originalRequest.tag(KomgaCachePolicy::class.java) == KomgaCachePolicy.Default) {
+            metadataCacheStore.load(originalRequest, if (canUseNetwork) minimumFetchedAt() else 0L)?.let { return it }
+        }
         val request = if (canUseNetwork) {
             originalRequest
         } else {

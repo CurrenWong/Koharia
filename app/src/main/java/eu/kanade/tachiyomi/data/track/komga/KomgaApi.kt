@@ -263,11 +263,13 @@ class KomgaApi(
         }
 
     suspend fun updateBookProgress(
+        sourceId: Long,
         bookUrl: String,
         page: Int,
         completed: Boolean,
     ) {
-        val source = resolveSourceForUrl(bookUrl) ?: return
+        val source = resolveSource(sourceId)?.takeIf { bookUrl.belongsTo(it) }
+            ?: error("Komga connection no longer matches the progress request")
         val payload = json.encodeToString(
             if (completed) {
                 BookReadProgressUpdateDto(completed = true, page = page)

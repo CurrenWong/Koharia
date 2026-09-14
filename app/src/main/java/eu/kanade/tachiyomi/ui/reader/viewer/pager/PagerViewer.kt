@@ -260,6 +260,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 setCurrentItemForPageTurn(pager.currentItem + delta)
             }
         }
+        pager.swipePageTurnsEnabled = { activity.readerPreferences.swipePageTurns.get() }
         pager.longTapListener = f@{ event ->
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
                 val holder = (adapter.slots.getOrNull(pager.currentItem) as? PagerSlot.Pages)

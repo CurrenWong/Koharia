@@ -29,6 +29,9 @@ import eu.kanade.tachiyomi.source.model.SManga
 import koharia.connection.ConnectionEpubHistorySyncAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
 import koharia.connection.ConnectionPublicationAdapter
+import koharia.connection.ConnectionShelfCachePolicy
+import koharia.connection.ConnectionShelfStateStore
+import koharia.connection.ConnectionShelfUpdates
 import koharia.epub.cache.EpubCacheManager
 import koharia.komga.api.dto.KOMGA_LIBRARY_IDS_MEMO_KEY
 import koharia.komga.api.dto.KOMGA_LIBRARY_ID_MEMO_KEY
@@ -69,8 +72,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -83,7 +88,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
@@ -95,6 +103,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.domain.source.service.SourceManager
+import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.source.model.Filter as SourceModelFilter
 
 class KomgaLibraryScreenModel(
@@ -140,9 +149,10 @@ class KomgaLibraryScreenModel(
     private var latestCachedManga = emptyList<Manga>()
 
     init {
-        if (libraryPreferences.showLibraryReadProgress.get()) {
-            screenModelScope.launchIO {
-                refreshKomgaReadProgress()
+        screenModelScope.launchIO {
+            ConnectionShelfUpdates.changes.filter { it == sourceId }.collectLatest {
+                kotlinx.coroutines.delay(500)
+                refresh()
             }
         }
         screenModelScope.launchIO {
@@ -201,13 +211,9 @@ class KomgaLibraryScreenModel(
                     }
                 }
             }
-            if (!basePreferences.downloadedOnly.get()) {
-                screenModelScope.launchIO {
-                    reloadKomgaState(source, showRefreshing = false, resetSelection = true, forceRefresh = true)
-                }
-            }
             screenModelScope.launchIO {
-                basePreferences.downloadedOnly.changes().collect { cachedOnly ->
+                var receivedInitialMode = false
+                basePreferences.downloadedOnly.changes().distinctUntilChanged().collect { cachedOnly ->
                     if (cachedOnly) {
                         komgaReadProgress.value = emptyMap()
                         val filters = state.value.filters.withoutUnsupportedCachedSelections()
@@ -218,9 +224,15 @@ class KomgaLibraryScreenModel(
                             )
                         }
                     } else {
-                        refreshKomgaReadProgress()
-                        reloadKomgaState(source, showRefreshing = true, resetSelection = true, forceRefresh = true)
+                        if (receivedInitialMode) refreshKomgaReadProgress()
+                        reloadKomgaState(
+                            source,
+                            showRefreshing = filtersInitialized,
+                            resetSelection = true,
+                            forceRefresh = false,
+                        )
                     }
+                    receivedInitialMode = true
                 }
             }
             applyClassifiedLibraries(source, libraryClassificationManager.getLibraries(sourceId))
@@ -644,6 +656,24 @@ class KomgaLibraryScreenModel(
         }
 
         readProgressMutex.withLock {
+            val cache = ConnectionShelfStateStore(
+                uy.kohesive.injekt.Injekt.get<android.app.Application>(),
+                komgaSource.shelfCacheNamespace(),
+            )
+            val saved = cache.read("progress")?.let { encoded ->
+                runCatching {
+                    kotlinx.serialization.json.Json.parseToJsonElement(encoded).jsonObject.mapValues { (_, value) ->
+                        val pair = value.jsonArray
+                        MangaReadProgress(pair[0].jsonPrimitive.long, pair[1].jsonPrimitive.long)
+                    }
+                }.getOrNull()
+            }
+            val cacheUpdatedAt = cache.read("progressUpdatedAt")?.toLongOrNull() ?: 0L
+            val serverChanged = cacheUpdatedAt < ConnectionShelfUpdates.version(sourceId)
+            if (!ConnectionShelfCachePolicy.shouldRefresh(saved != null, forceRefresh || serverChanged)) {
+                komgaReadProgress.value = checkNotNull(saved)
+                return@withLock
+            }
             runCatching {
                 trackerManager.komga.api.getInProgressBookProgress(
                     sourceId = sourceId,
@@ -677,6 +707,17 @@ class KomgaLibraryScreenModel(
                     }
                 }
                 komgaReadProgress.value = progressByUrl
+                val encodedProgress = JsonObject(
+                    progressByUrl.mapValues { (_, progress) ->
+                        val counts = listOf(
+                            JsonPrimitive(progress.readCount),
+                            JsonPrimitive(progress.totalChapterCount),
+                        )
+                        JsonArray(counts)
+                    },
+                ).toString()
+                cache.write("progress", encodedProgress)
+                cache.write("progressUpdatedAt", System.currentTimeMillis().toString())
             }.onFailure { error ->
                 logcat(LogPriority.WARN, error) {
                     "Failed to load Komga read progress for library sourceId=$sourceId"

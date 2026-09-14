@@ -60,6 +60,7 @@ class EpubReaderFragment : Fragment() {
 
     interface Host {
         fun onTap(positionX: Float, positionY: Float): Boolean
+        fun swipePageTurnsEnabled(): Boolean = true
 
         fun onLocatorChanged(locator: Locator)
 
@@ -126,6 +127,7 @@ class EpubReaderFragment : Fragment() {
     private var tocHrefs: List<String> = emptyList()
     private var chapterBreaksEnabled = false
     private var continuousScrollInstallJob: Job? = null
+    private var continuousScrollInstallHref: String? = null
     private var imageInteractionInstallJob: Job? = null
     private var fontSwitchJob: Job? = null
     private var fontRequirementCaptureJob: Job? = null
@@ -200,6 +202,7 @@ class EpubReaderFragment : Fragment() {
 
         override fun onPageLoaded() {
             pageTransitionController?.onPageLoaded()
+            scheduleContinuousScrollInstall(readyNavigatorFragment())
         }
     }
 
@@ -251,7 +254,10 @@ class EpubReaderFragment : Fragment() {
         container: android.view.ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        return FrameLayout(requireContext()).apply {
+        return SwipePageTurnGate(requireContext(), onVerticalSwipe = ::navigateShortUnstitchedResource) {
+            epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
+                host?.swipePageTurnsEnabled() == false
+        }.apply {
             addView(
                 FragmentContainerView(requireContext()).apply {
                     id = R.id.epub_reader_navigator_container
@@ -898,7 +904,7 @@ class EpubReaderFragment : Fragment() {
                         preserveImageColors = preserveImageColors,
                         parentColorsInverted = parentColorsInverted,
                         paginated = shouldFitStandaloneImage(),
-                    ) + EPUB_WARM_NEARBY_IMAGES_SCRIPT,
+                    ) + ";\n" + EPUB_WARM_NEARBY_IMAGES_SCRIPT,
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -1101,83 +1107,136 @@ class EpubReaderFragment : Fragment() {
         epubLayoutPreferences.readingMode.get() == EpubLayoutPreferences.ReadingMode.PAGINATED &&
             !fontOverridesDisabled()
 
+    private fun navigateShortUnstitchedResource(forward: Boolean): Boolean {
+        if (epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL ||
+            continuousScrollInstalledHref != null
+        ) {
+            return false
+        }
+        val navigator = readyNavigatorFragment() ?: return false
+        val locator = navigator.currentLocator.value
+        var shortVisibleResource = false
+        navigator.publicationView.forEachWebView { webView ->
+            if (webView.isVisiblyDrawn() && webView.progress == 100 &&
+                webView.url?.sameEpubResource(locator.href.toString()) == true &&
+                !webView.canScrollVertically(-1) && !webView.canScrollVertically(1)
+            ) {
+                shortVisibleResource = true
+            }
+        }
+        if (!shortVisibleResource) return false
+        val order = sessionRepository.get(chapterId)?.publication?.readingOrder ?: return false
+        val index = order.indexOfFirst { it.href.toString().sameEpubResource(locator.href.toString()) }
+        if (index < 0) return false
+        val target = order.getOrNull(index + if (forward) 1 else -1) ?: return false
+        return goTo(target)
+    }
+
     private fun scheduleContinuousScrollInstall(
         navigator: EpubNavigatorFragment?,
         locator: Locator? = navigator?.currentLocator?.value,
     ) {
+        if (continuousScrollInstallJob?.isActive == true &&
+            locator?.href?.toString() == continuousScrollInstallHref
+        ) {
+            return
+        }
         continuousScrollInstallJob?.cancel()
         if (navigator == null || locator == null ||
             epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
         ) {
             return
         }
+        continuousScrollInstallHref = locator.href.toString()
         continuousScrollInstallJob = viewLifecycleOwner.lifecycleScope.launch {
-            delay(CONTINUOUS_SCROLL_INSTALL_DELAY_MS)
-            if (!isAdded || view == null || readyNavigatorFragment() !== navigator ||
-                epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
-            ) {
-                return@launch
-            }
-            val session = sessionRepository.get(chapterId) ?: return@launch
-            val currentIndex = session.publication.readingOrder.indexOfFirst {
-                it.href.toString().sameEpubResource(locator.href.toString())
-            }
-            if (currentIndex < 0) return@launch
-            val resources = session.publication.readingOrder.mapIndexedNotNull { index, link ->
-                link.readiumServedUrl(session.publication.baseUrl)?.let { servedUrl ->
-                    EpubContinuousScrollResource(
-                        index = index,
-                        href = link.href.toString(),
-                        url = servedUrl,
-                    )
+            var attempt = 0
+            while (true) {
+                delay(if (attempt < 20) CONTINUOUS_SCROLL_INSTALL_DELAY_MS else 1_000L)
+                attempt++
+                if (!isAdded || view == null || readyNavigatorFragment() !== navigator ||
+                    epubLayoutPreferences.readingMode.get() != EpubLayoutPreferences.ReadingMode.SCROLL
+                ) {
+                    return@launch
                 }
-            }
-            if (resources.size != session.publication.readingOrder.size) return@launch
-            val result = runCatching {
-                navigator.evaluateJavascript(
-                    buildEpubContinuousScrollInstallScript(
-                        resources = resources,
-                        currentIndex = currentIndex,
-                        initialProgression = locator.locations.progression ?: 0.0,
-                        imageInteractionScript = buildEpubImageInteractionInstallScript(
-                            longPressTimeoutMs = ViewConfiguration.getLongPressTimeout(),
-                            touchSlopCssPx = ViewConfiguration.get(requireContext()).scaledTouchSlop /
-                                (requireContext().resources.displayMetrics.density.takeIf { it > 0f } ?: 1f),
-                            preserveImageColors = preserveImageColors,
-                            parentColorsInverted = parentColorsInverted,
-                            paginated = false,
-                        ),
-                        contentPreparationScript = """
+                if (!viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) continue
+                val currentLocator = navigator.currentLocator.value
+                if (!currentLocator.href.toString().sameEpubResource(locator.href.toString())) return@launch
+                val session = sessionRepository.get(chapterId) ?: return@launch
+                val currentIndex = session.publication.readingOrder.indexOfFirst {
+                    it.href.toString().sameEpubResource(locator.href.toString())
+                }
+                if (currentIndex < 0) return@launch
+                val resources = session.publication.readingOrder.mapIndexedNotNull { index, link ->
+                    link.readiumServedUrl(session.publication.baseUrl)?.let { servedUrl ->
+                        EpubContinuousScrollResource(
+                            index = index,
+                            href = link.href.toString(),
+                            url = servedUrl,
+                        )
+                    }
+                }
+                if (resources.size != session.publication.readingOrder.size) return@launch
+                val result = try {
+                    kotlinx.coroutines.withTimeoutOrNull(2_000) {
+                        navigator.evaluateJavascript(
+                            buildEpubContinuousScrollInstallScript(
+                                resources = resources,
+                                currentIndex = currentIndex,
+                                initialProgression = currentLocator.locations.progression ?: 0.0,
+                                imageInteractionScript = buildEpubImageInteractionInstallScript(
+                                    longPressTimeoutMs = ViewConfiguration.getLongPressTimeout(),
+                                    touchSlopCssPx = ViewConfiguration.get(requireContext()).scaledTouchSlop /
+                                        (requireContext().resources.displayMetrics.density.takeIf { it > 0f } ?: 1f),
+                                    preserveImageColors = preserveImageColors,
+                                    parentColorsInverted = parentColorsInverted,
+                                    paginated = false,
+                                ),
+                                contentPreparationScript = """
                             (function() {
                                 ${buildEpubTypographyPreparationScript(
-                            paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
-                            textAlignment = textAlignmentOverride,
-                            longWordWrappingEnabled = !fontOverridesDisabled(),
-                        )};
+                                    paragraphIndentOverrideEnabled = paragraphIndentOverrideEnabled,
+                                    textAlignment = textAlignmentOverride,
+                                    longWordWrappingEnabled = !fontOverridesDisabled(),
+                                )};
                                 ${buildEpubFootnoteCompatibilityScript(
-                            applyReaderStyles = paragraphIndentOverrideEnabled,
-                            readerFontScale = readerFontScale,
-                        )};
+                                    applyReaderStyles = paragraphIndentOverrideEnabled,
+                                    readerFontScale = readerFontScale,
+                                )};
                                 ${fontPreparation.script};
                                 return true;
                             })()
-                        """.trimIndent(),
-                    ),
-                )
-            }.getOrNull()
-            if (result == "\"installed\"" || result == "\"ready\"") {
-                if (result == "\"installed\"") {
-                    continuousScrollInstalledHref = locator.href.toString()
-                    continuousScrollLocator = locator
-                } else {
-                    // A preference refresh reuses the existing JS window. Do not replace a newer
-                    // iframe Locator with the stale native Locator for the window's owner XHTML.
-                    continuousScrollInstalledHref = continuousScrollInstalledHref ?: locator.href.toString()
-                    continuousScrollLocator = continuousScrollLocator ?: locator
+                                """.trimIndent(),
+                            ),
+                        )
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (attempt == 1) logcat(LogPriority.WARN, error) { "Continuous EPUB installation failed" }
+                    null
                 }
-                logcat(LogPriority.DEBUG) {
-                    "EPUB continuous resource flow installed chapterId=$chapterId " +
-                        "resourceIndex=$currentIndex resources=${resources.size}"
+                val completedHref = navigator.currentLocator.value.href.toString()
+                if (!completedHref.sameEpubResource(locator.href.toString())) return@launch
+                if (result == "\"installed\"" || result == "\"ready\"") {
+                    if (result == "\"installed\"") {
+                        continuousScrollInstalledHref = locator.href.toString()
+                        continuousScrollLocator = locator
+                    } else {
+                        // A preference refresh reuses the existing JS window. Do not replace a newer
+                        // iframe Locator with the stale native Locator for the window's owner XHTML.
+                        continuousScrollInstalledHref = continuousScrollInstalledHref ?: locator.href.toString()
+                        continuousScrollLocator = continuousScrollLocator ?: locator
+                    }
+                    logcat(LogPriority.DEBUG) {
+                        "EPUB continuous resource flow installed chapterId=$chapterId " +
+                            "resourceIndex=$currentIndex resources=${resources.size}"
+                    }
+                    return@launch
+                }
+                if (attempt == 20) {
+                    logcat(LogPriority.WARN) {
+                        "Continuous EPUB document is not ready chapterId=$chapterId"
+                    }
                 }
             }
         }
@@ -1186,6 +1245,7 @@ class EpubReaderFragment : Fragment() {
     private fun clearContinuousScrollState() {
         continuousScrollInstallJob?.cancel()
         continuousScrollInstallJob = null
+        continuousScrollInstallHref = null
         continuousScrollInstalledHref = null
         continuousScrollLocator = null
     }

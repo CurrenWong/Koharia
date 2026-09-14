@@ -26,6 +26,7 @@ import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
+import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.Date
@@ -45,6 +46,8 @@ class KomgaProgressSyncService(
 ) {
 
     private val syncMutex = Mutex()
+    private val pageWriteMutex = Mutex()
+    private val confirmedPageProgress = java.util.concurrent.ConcurrentHashMap<String, KomgaApi.BookProgressSnapshot>()
 
     suspend fun syncFromServer(manga: Manga) {
         syncMutex.withLock {
@@ -70,7 +73,9 @@ class KomgaProgressSyncService(
         chapterUrl: String,
     ): KomgaApi.BookProgressSnapshot? {
         if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return null
-        return trackerManager.komga.api.getBookProgress(chapterUrl, sourceId)
+        return trackerManager.komga.api.getBookProgress(chapterUrl, sourceId)?.also {
+            confirmedPageProgress["$sourceId:$chapterUrl"] = it
+        }
     }
 
     /**
@@ -218,21 +223,57 @@ class KomgaProgressSyncService(
         chapterUrl: String,
         pageIndex: Int,
         totalPages: Int,
-    ) {
-        if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return
-        if (totalPages <= 0) return
-
+    ) = pageWriteMutex.withLock {
+        if (sourceManager.get(sourceId) !is KomgaSource || !chapterUrl.contains("/api/v1/books/")) return@withLock
+        if (totalPages <= 0) return@withLock
+        if (koharia.connection.ConnectionRestoreState.isRestoring) return@withLock
+        val key = "$sourceId:$chapterUrl"
+        val baseline = confirmedPageProgress[key]
+        val page = (pageIndex + 1).coerceIn(1, totalPages)
+        val completed = page >= totalPages
         runCatchingCancellable {
-            val page = (pageIndex + 1).coerceIn(1, totalPages)
-            val completed = page >= totalPages
-            trackerManager.komga.api.updateBookProgress(
-                bookUrl = chapterUrl,
-                page = page,
-                completed = completed,
-            )
+            trackerManager.komga.api.updateBookProgress(sourceId, chapterUrl, page, completed)
+            if (baseline != null) {
+                confirmedPageProgress[key] = baseline.copy(pageIndex = page - 1, completed = completed, readDate = null)
+            }
+            KomgaPageProgressRetryJob.cancel(sourceId, chapterUrl)
         }.onFailure { error ->
-            logcat(LogPriority.WARN, error) { "Failed to push Komga page progress for $chapterUrl" }
+            if (baseline != null) {
+                KomgaPageProgressRetryJob.enqueue(sourceId, chapterUrl, page - 1, totalPages, baseline)
+            }
+            logcat(LogPriority.WARN, error) { "Failed to push Komga page progress sourceId=$sourceId" }
         }
+    }
+
+    internal suspend fun retryPageProgress(
+        sourceId: Long,
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+        expectedPage: Int,
+        expectedCompleted: Boolean,
+        expectedDate: String?,
+    ): Boolean = pageWriteMutex.withLock {
+        if (koharia.connection.ConnectionRestoreState.isRestoring) throw java.io.IOException("Restore in progress")
+        if (sourceManager.get(sourceId) !is KomgaSource) {
+            if (uy.kohesive.injekt.Injekt.get<koharia.connection.ConnectionPreferences>()
+                    .getProfiles().any { it.id == sourceId }
+            ) {
+                throw java.io.IOException("Connection is still loading")
+            }
+            return@withLock true
+        }
+        val remote = trackerManager.komga.api.getBookProgress(chapterUrl, sourceId) ?: return@withLock true
+        if (remote.totalPages != totalPages || totalPages <= 0) return@withLock true
+        if (!canRetryKomgaPageProgress(remote, expectedPage, expectedCompleted, expectedDate)) return@withLock true
+        if (koharia.connection.ConnectionRestoreState.isRestoring) throw java.io.IOException("Restore in progress")
+        trackerManager.komga.api.updateBookProgress(sourceId, chapterUrl, pageIndex + 1, pageIndex + 1 >= totalPages)
+        confirmedPageProgress["$sourceId:$chapterUrl"] = remote.copy(
+            pageIndex = pageIndex,
+            completed = pageIndex + 1 >= totalPages,
+            readDate = null,
+        )
+        true
     }
 
     private fun Manga.isKomgaSeries(): Boolean {
@@ -476,3 +517,11 @@ private fun MutableList<String>.addSample(value: String) {
         add(value)
     }
 }
+
+internal fun canRetryKomgaPageProgress(
+    remote: KomgaApi.BookProgressSnapshot,
+    expectedPage: Int,
+    expectedCompleted: Boolean,
+    expectedDate: String?,
+): Boolean = (remote.pageIndex ?: -1) == expectedPage && remote.completed == expectedCompleted &&
+    (expectedDate == null || remote.readDate == expectedDate)

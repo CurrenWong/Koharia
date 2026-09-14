@@ -6,7 +6,7 @@
 
 # Koharia
 
-面向 Komga 与本地媒体库的 Android 漫画和书籍阅读器
+面向 Komga、LANraragi 与本地媒体库的 Android 漫画和书籍阅读器
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-0877d2?labelColor=27303D)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Mister-album/Koharia?label=release)](https://github.com/Mister-album/Koharia/releases/latest)
@@ -15,7 +15,7 @@
 
 ## 项目简介
 
-Koharia 是一款面向 [Komga](https://komga.org/) 服务器与本地媒体库的第三方 Android 客户端和阅读器。它为漫画、扫描图像内容、PDF 以及 EPUB、TXT、MOBI 等可重排书籍提供对应的阅读体验，并将内容浏览、作品详情、阅读进度、离线访问与阅读设置整合在同一个应用中。
+Koharia 是一款面向 [Komga](https://komga.org/)、[LANraragi](https://github.com/Difegue/LANraragi) 服务器与本地媒体库的第三方 Android 客户端和阅读器。它为漫画、扫描图像内容、PDF 以及 EPUB、TXT、MOBI 等可重排书籍提供对应的阅读体验，并将内容浏览、作品详情、阅读进度、离线访问与阅读设置整合在同一个应用中。
 
 项目基于 [Mihon](https://github.com/mihonapp/mihon) 的成熟 Android 阅读基础持续开发。Koharia 不提供或托管内容，你能浏览的作品取决于所连接的服务器、账号权限以及主动授权给应用的本地目录。
 
@@ -52,13 +52,24 @@ Koharia 专注于个人媒体库阅读，不提供公共在线内容源，也不
 
 ## 主要功能
 
-### 漫画与书籍统一管理
+### Komga 书库
 
-- 可选择将媒体库划分为“漫画”和“书籍”，也可以保持合并书架。
-- 支持封面网格、列表、搜索、筛选、排序、作品详情、阅读历史和多服务器快速切换。
-- Komga 服务器库分类与本地书库设置相互独立，便于按不同来源组织内容。
+- 内置 Komga 支持，可配置多个服务器与账号，并在书架中快速切换。
+- 按服务器书库浏览系列与卷册，查看封面和作品详情，支持搜索、筛选与排序。
+- 漫画使用分页、连续滚动或双页阅读；EPUB 使用可重排书籍阅读器。
+- 支持在线阅读、手动下载和离线访问，并与服务器同步支持的阅读进度及历史记录。
+- 书架数据缓存到本地，优先显示已有内容；可手动刷新，也可响应服务器更新事件。
 
-### 本地库与文件导入
+### LANraragi 书库
+
+- 内置 LANraragi 支持，无需安装扩展；可添加多个服务器，通过服务器地址与 API Key 配置连接，未启用鉴权时可留空 Key。
+- Archive 作为独立作品阅读，Tankoubon 作为合集显示其 Archive 成员；Category 显示在书架顶部，方便切换分类。
+- 支持搜索、标签与阅读状态筛选、排序，以及在线阅读和手动下载后离线阅读。
+- Archive 可直接进入阅读器，也可先打开带逐页网格预览的详情页，再从指定页面开始阅读。
+- 缓存书库元数据，离线时仍可浏览和搜索；正文需另行下载，元数据缓存不代表作品已下载。
+- 按 Archive 同步阅读进度，离线阅读记录可在恢复连接后补传；需要服务器开启进度记录并提供相应权限。“标记未读”仅重置本地状态，不清零服务器进度。
+
+### 本地媒体库
 
 - 可通过 Android 系统目录授权关联已有文件夹，扫描过程不会移动或删除原文件；也可由 Koharia 创建 `Comics`、`Books` 与 `.koharia` 目录结构。
 - 本地目录可标记为漫画、书籍或混合内容，并分别归入自定义书库。
@@ -68,7 +79,7 @@ Koharia 专注于个人媒体库阅读，不提供公共在线内容源，也不
 - 统一使用扩展名、MIME 类型和文件特征识别格式，降低文件名缺失或扩展名不准确造成的导入失败。
 - 元数据编辑结果可仅保存在应用数据库，也可写入作品旁的 `ComicInfo.xml` / `metadata.opf`，或本地库的 `.koharia/metadata` 统一目录。
 
-### 本地格式支持
+#### 本地格式支持
 
 | 内容类型 | 扩展名或形式 | 阅读方式与说明 |
 | --- | --- | --- |
@@ -81,6 +92,12 @@ Koharia 专注于个人媒体库阅读，不提供公共在线内容源，也不
 | DjVu | `DJVU`、`DJV` | 通过 MIT 许可的 `djvu-rs` WASM 解码 JB2 / IW44 页面并使用漫画阅读器显示；运行依赖 Android WebView 的 WebAssembly 能力 |
 
 DJVU 解码器由系统 WebView 的 JavaScript / WebAssembly 运行时执行，当前构建不包含或使用 Chicory。组件来源、许可证与校验信息见 [`app/src/main/assets/djvu/README.txt`](./app/src/main/assets/djvu/README.txt)。
+
+### 漫画与书籍统一管理
+
+- 可选择将媒体库划分为“漫画”和“书籍”，也可以保持合并书架。
+- 支持封面网格、列表、搜索、筛选、排序、作品详情、阅读历史和多服务器快速切换。
+- 各连接的书库组织与设置相互独立，便于管理不同来源的内容。
 
 ### 漫画阅读
 
@@ -99,6 +116,7 @@ DJVU 解码器由系统 WebView 的 JavaScript / WebAssembly 运行时执行，�
 
 ### 进度、离线与数据管理
 
+- Komga 与 LANraragi 书架优先显示本地缓存；缓存不存在时获取数据，手动刷新或服务器更新事件触发后续更新，避免启动时等待网络。
 - 保存本地阅读位置、历史记录和书签，并与服务器同步支持的阅读进度。
 - 手动下载、书籍缓存和漫画页面缓存使用独立策略，缓存不会被误标记为已下载内容。
 - 支持缓存容量限制、按需资源读取、离线访问，以及按服务器组织下载目录。
@@ -137,7 +155,7 @@ DJVU 解码器由系统 WebView 的 JavaScript / WebAssembly 运行时执行，�
 
 Koharia 基于 [Mihon](https://github.com/mihonapp/mihon) 开发，并遵循 Apache License 2.0。许可证与署名信息见 [LICENSE](./LICENSE) 和 [NOTICE](./NOTICE)。
 
-贡献相关说明见 [CONTRIBUTING.md](./CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)。再分发或制作衍生版本时，请保留必要署名，并避免将其描述为 Mihon 或 Komga 的官方版本。
+贡献相关说明见 [CONTRIBUTING.md](./CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)。再分发或制作衍生版本时，请保留必要署名，并避免将其描述为 Mihon、Komga 或 LANraragi 的官方版本。
 
 ## 致谢
 

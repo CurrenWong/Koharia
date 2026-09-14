@@ -1737,4 +1737,7 @@
     <string name="lanraragi_save_anyway">Save anyway</string>
     <string name="action_save_merged_page">Save merged page</string>
     <string name="save_merged_page_insufficient_memory">Not enough memory to save these pages at full resolution. Close other apps and try again.</string>
+    <string name="epub_no_readable_chapters">This EPUB contains no readable chapters.</string>
+    <string name="series_details_load_failed">Could not load this work. It may have been removed.</string>
+    <string name="pref_swipe_page_turns">Swipe to turn pages</string>
 </resources>

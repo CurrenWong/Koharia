@@ -35,6 +35,7 @@ class KomgaApiClient(
     private val client: OkHttpClient,
     @PublishedApi internal val json: Json,
     private val searchCapabilities: KomgaSearchCapabilities = KomgaSearchCapabilities(),
+    private val shelfCache: (Request) -> Response? = { null },
 ) {
 
     init {
@@ -219,7 +220,11 @@ class KomgaApiClient(
         }
     }
 
-    suspend fun execute(request: Request): Response = client.newCall(request).awaitSuccess()
+    suspend fun execute(request: Request): Response =
+        cachedShelfResponse(request) ?: client.newCall(request).awaitSuccess()
+
+    private fun cachedShelfResponse(request: Request): Response? =
+        if (request.tag(KomgaCachePolicy::class.java) == KomgaCachePolicy.Default) shelfCache(request) else null
 
     fun bookReadStatusRequest(bookUrl: String, read: Boolean): Request {
         val builder = Request.Builder()
@@ -388,7 +393,7 @@ class KomgaApiClient(
     }
 
     private suspend inline fun <reified T> okhttp3.Call.executeAndParse(): T {
-        val response = awaitSuccess()
+        val response = cachedShelfResponse(request()) ?: awaitSuccess()
         response.use { return parse(it) }
     }
 

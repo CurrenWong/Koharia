@@ -81,6 +81,41 @@ class KomgaMetadataCacheStoreTest {
         assertEquals(emptySet<String>(), store.findLibraryIds(readListUrl))
     }
 
+    @Test
+    fun `oversized known and unknown bodies bypass cache without consuming response`() {
+        val store = KomgaMetadataCacheStore(context())
+        for (unknown in listOf(false, true)) {
+            val request = searchRequest("{\"unknown\":$unknown}")
+            val text = "x".repeat((KomgaMetadataCacheStore.MAX_CACHE_BYTES + 123).toInt())
+            val body = if (unknown) {
+                object : okhttp3.ResponseBody() {
+                    private val input = okio.Buffer().writeUtf8(text)
+                    override fun contentType() = "application/json".toMediaType()
+                    override fun contentLength() = -1L
+                    override fun source() = input
+                }
+            } else {
+                text.toResponseBody("application/json".toMediaType())
+            }
+            val response = response(request, "").newBuilder().body(body).build()
+            store.save(request, response).use { assertEquals(text, it.body.string()) }
+            assertNull(store.load(request))
+        }
+    }
+
+    @Test
+    fun `binary response and file query are not cached`() {
+        val store = KomgaMetadataCacheStore(context())
+        assertFalse(KomgaMetadataCacheStore.isEligibleUrl("https://komga.test/api/v1/books/id/file?download=true"))
+        val request = Request.Builder().url("https://komga.test/api/v1/books/id/thumbnail").build()
+        val response = response(
+            request,
+            "",
+        ).newBuilder().body("image".toResponseBody("image/png".toMediaType())).build()
+        store.save(request, response).use { assertEquals("image", it.body.string()) }
+        assertNull(store.load(request))
+    }
+
     private fun context(): Context = mockk {
         every { getExternalFilesDir(any()) } returns File(tempDir, "external")
         every { cacheDir } returns File(tempDir, "legacy")

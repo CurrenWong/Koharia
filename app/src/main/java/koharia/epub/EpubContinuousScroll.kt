@@ -51,6 +51,12 @@ internal fun buildEpubContinuousScrollInstallScript(
             const initialProgression = $clampedProgression;
             const requestedContentPreparationScript = $contentPreparationScriptJson;
             const requestedImageInteractionScript = $imageInteractionScriptJson;
+            if (document.readyState === 'loading' || !document.body) return 'pending';
+            if (!resources[currentIndex]) return 'unavailable';
+            const expectedUrl = new URL(resources[currentIndex].url, document.baseURI);
+            if (expectedUrl.origin !== location.origin || expectedUrl.pathname !== location.pathname) {
+                return 'different-resource';
+            }
             const existing = window.__kohariaContinuousScroll;
             if (existing && existing.currentIndex === currentIndex) {
                 existing.refresh(requestedContentPreparationScript, requestedImageInteractionScript);
@@ -71,6 +77,14 @@ internal fun buildEpubContinuousScrollInstallScript(
             let lastLocationSentAt = 0;
             let contentPreparationScript = requestedContentPreparationScript;
             let imageInteractionScript = requestedImageInteractionScript;
+            function readingStyles() {
+                const computed = getComputedStyle(document.documentElement);
+                return Array.from(computed)
+                    .filter(function(name) { return name.startsWith('--USER__') || name.startsWith('--RS__'); })
+                    .sort()
+                    .map(function(name) { return [name, computed.getPropertyValue(name)]; });
+            }
+            let readingStyleSignature = JSON.stringify(readingStyles());
 
             function installImageInteractions(targetWindow, resourceIndex) {
                 try {
@@ -191,6 +205,9 @@ internal fun buildEpubContinuousScrollInstallScript(
                 try {
                     const doc = iframe.contentDocument;
                     if (!doc || !doc.documentElement) return;
+                    for (const entry of readingStyles()) {
+                        doc.documentElement.style.setProperty(entry[0], entry[1]);
+                    }
                     doc.documentElement.style.setProperty('height', 'auto', 'important');
                     doc.documentElement.style.setProperty('overflow', 'hidden', 'important');
                     if (doc.body) {
@@ -232,10 +249,33 @@ internal fun buildEpubContinuousScrollInstallScript(
                 iframe.style.height = (measuredHeights.get(index) || viewportHeight) + 'px';
                 iframe.style.visibility = 'hidden';
                 iframe.addEventListener('load', function() {
+                    if (liveFrames.get(index) !== iframe || !iframe.hasAttribute('srcdoc')) return;
                     failedResources.delete(index);
                     measureFrame(index, iframe);
                     try {
                         const doc = iframe.contentDocument;
+                        // Only the owning document may talk to Readium's native lifecycle bridge.
+                        // Forward taps using the parent's coordinates, preserving image interception.
+                        doc.addEventListener('click', function(event) {
+                            if (event.defaultPrevented || !iframe.contentWindow.getSelection().isCollapsed) return;
+                            const link = event.target.closest('a[href]');
+                            if (!link && event.target.closest('button,input,textarea,select,[contenteditable]')) return;
+                            const rect = iframe.getBoundingClientRect();
+                            let target = document.body;
+                            if (link) {
+                                target = document.createElement('a');
+                                for (const attribute of link.attributes) target.setAttribute(attribute.name, attribute.value);
+                                target.href = new URL(link.getAttribute('href'), doc.baseURI).href;
+                                target.style.display = 'none';
+                                document.body.appendChild(target);
+                            }
+                            event.preventDefault();
+                            target.dispatchEvent(new MouseEvent('click', {
+                                bubbles: true, cancelable: true, view: window,
+                                clientX: rect.left + event.clientX, clientY: rect.top + event.clientY,
+                            }));
+                            if (link) target.remove();
+                        });
                         const observer = new ResizeObserver(function() { measureFrame(index, iframe); });
                         observer.observe(doc.documentElement);
                         if (doc.body) observer.observe(doc.body);
@@ -248,8 +288,8 @@ internal fun buildEpubContinuousScrollInstallScript(
                 liveFrames.set(index, iframe);
                 section.replaceChildren(iframe);
                 // A direct iframe URL is treated by Readium's WebViewClient as an internal link
-                // navigation. Fetching through the same resource server keeps Readium's injected
-                // CSS/scripts while srcdoc prevents the horizontal resource pager from taking over.
+                // navigation. Keep the injected CSS, but never bootstrap another native navigator
+                // inside this WebView: Android's JavaScript interfaces are shared by all frames.
                 fetch(resources[index].url)
                     .then(function(response) {
                         if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -257,17 +297,21 @@ internal fun buildEpubContinuousScrollInstallScript(
                     })
                     .then(function(html) {
                         if (liveFrames.get(index) !== iframe) return;
-                        const escapedUrl = resources[index].url
-                            .replace(/&/g, '&amp;')
-                            .replace(/"/g, '&quot;')
-                            .replace(/</g, '&lt;');
-                        const base = '<base href="' + escapedUrl + '">';
-                        if (/<head[\s>]/i.test(html)) {
-                            html = html.replace(/<head([^>]*)>/i, '<head${'$'}1>' + base);
-                        } else {
-                            html = base + html;
+                        const doc = new DOMParser().parseFromString(html, 'text/html');
+                        const base = doc.createElement('base');
+                        base.href = resources[index].url;
+                        doc.head.prepend(base);
+                        const navigatorScripts = new Set(Array.from(document.querySelectorAll('script[src]'))
+                            .map(function(script) { return new URL(script.src, document.baseURI); })
+                            .filter(function(url) { return url.pathname.startsWith('/readium/scripts/'); })
+                            .map(function(url) { return url.href; }));
+                        for (const script of doc.querySelectorAll('script[src]')) {
+                            const url = new URL(script.getAttribute('src'), base.href);
+                            if (navigatorScripts.has(url.href)) {
+                                script.remove();
+                            }
                         }
-                        iframe.srcdoc = html;
+                        iframe.srcdoc = '<!DOCTYPE html>' + doc.documentElement.outerHTML;
                     })
                     .catch(function() {
                         if (liveFrames.get(index) === iframe) section.replaceChildren();
@@ -356,13 +400,16 @@ internal fun buildEpubContinuousScrollInstallScript(
                 resources: resources,
                 notifyLocation: notifyLocation,
                 refresh: function(nextContentPreparationScript, nextImageInteractionScript) {
+                    const nextReadingStyleSignature = JSON.stringify(readingStyles());
+                    if (contentPreparationScript === nextContentPreparationScript &&
+                        imageInteractionScript === nextImageInteractionScript &&
+                        readingStyleSignature === nextReadingStyleSignature) return;
+                    readingStyleSignature = nextReadingStyleSignature;
                     contentPreparationScript = nextContentPreparationScript;
                     imageInteractionScript = nextImageInteractionScript;
                     try { window.eval(contentPreparationScript); } catch (_) {}
                     installImageInteractions(window, currentIndex);
-                    const loadedIndexes = Array.from(liveFrames.keys());
-                    loadedIndexes.forEach(unloadSection);
-                    updateWindow(activeIndex);
+                    liveFrames.forEach(function(iframe, index) { measureFrame(index, iframe); });
                     scheduleLocation();
                 },
             };

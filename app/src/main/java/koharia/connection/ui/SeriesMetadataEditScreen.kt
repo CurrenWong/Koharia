@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.StateScreenModel
@@ -23,26 +24,50 @@ import koharia.connection.LibraryMetadata
 import koharia.connection.LibraryMetadataField
 import koharia.connection.LibraryMetadataSuggestion
 import koharia.connection.MetadataFilenameTemplate
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
+import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.EInkCircularProgressIndicator
 import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 class SeriesMetadataEditScreen(
-    private val manga: Manga,
+    private val mangaId: Long,
 ) : Screen() {
 
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
+        val loaded by produceState<Result<Manga>?>(null, mangaId) {
+            value = runCatching {
+                withIOContext {
+                    Injekt.get<MangaRepository>().getMangaById(mangaId)
+                }
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+        val result = loaded
+        if (result == null) {
+            EInkCircularProgressIndicator()
+            return
+        }
+        val manga = result.getOrNull()
+        if (manga == null) {
+            LaunchedEffect(Unit) {
+                context.toast(MR.strings.series_details_load_failed)
+                navigator.pop()
+            }
+            return
+        }
         val sourceManager: SourceManager = Injekt.get()
         val source = remember(manga.source) { sourceManager.get(manga.source) }
         val adapter = source as? ConnectionMetadataAdapter

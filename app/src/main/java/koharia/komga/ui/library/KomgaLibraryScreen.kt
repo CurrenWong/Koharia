@@ -210,6 +210,15 @@ data class KomgaLibraryScreen(
         val context = LocalContext.current
         val snackbarHostState = remember { SnackbarHostState() }
         val mangaList = screenModel.mangaPagerFlow.collectAsLazyPagingItems()
+        LaunchedEffect(mangaList.loadState.refresh, mangaList.itemCount, state.isServerConfigured) {
+            if (state.isServerConfigured && mangaList.itemCount == 0 &&
+                mangaList.loadState.refresh is LoadState.Error
+            ) {
+                kotlinx.coroutines.delay(5_000)
+                mangaList.retry()
+            }
+        }
+
         val isRefreshing =
             state.isRefreshing || (mangaList.itemCount > 0 && mangaList.loadState.refresh is LoadState.Loading)
         val pullRefreshState = rememberPullRefreshState(

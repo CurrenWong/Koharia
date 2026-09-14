@@ -961,6 +961,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         super.onProvideAssistContent(outContent)
     }
 
+    override fun swipePageTurnsEnabled(): Boolean = readerPreferences.swipePageTurns.get()
+
     override fun onTap(positionX: Float, positionY: Float): Boolean {
         if (viewModel.imageState.value.isVisible || viewModel.footnoteState.value != null) return true
         val turnOrigin = PageTurnOrigin(positionX, positionY, PageTurnCause.TAP).normalized()

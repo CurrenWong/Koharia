@@ -14,7 +14,10 @@ internal data class KomgaSearchRequest(
     val fullTextSearch: String? = null,
 )
 
-class KomgaSearchCapabilities {
+class KomgaSearchCapabilities(
+    private val readLegacy: () -> Set<String> = { emptySet() },
+    private val writeLegacy: (Set<String>) -> Unit = {},
+) {
     private val legacyTypes = ConcurrentHashMap.newKeySet<KomgaApiClient.SearchType>()
 
     @Volatile
@@ -27,14 +30,16 @@ class KomgaSearchCapabilities {
         legacyTypes.clear()
     }
 
-    internal fun usesLegacy(type: KomgaApiClient.SearchType): Boolean = type in legacyTypes
+    internal fun usesLegacy(type: KomgaApiClient.SearchType): Boolean = type in legacyTypes || type.name in readLegacy()
 
     internal fun markLegacy(type: KomgaApiClient.SearchType) {
         legacyTypes += type
+        writeLegacy(readLegacy() + type.name)
     }
 
     internal fun clear() {
         legacyTypes.clear()
+        writeLegacy(emptySet())
     }
 }
 

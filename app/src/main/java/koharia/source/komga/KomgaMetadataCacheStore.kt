@@ -7,18 +7,24 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
+import okio.ForwardingSource
+import okio.buffer
+import okio.sink
+import okio.source
 import tachiyomi.core.common.storage.LocalTempCacheDirectoryProvider
 import java.io.File
 import java.security.MessageDigest
 
 internal class KomgaMetadataCacheStore(
     context: Context,
+    private val namespace: () -> String = { "" },
 ) {
 
     private val cacheDir = LocalTempCacheDirectoryProvider.metadataCacheDir(context)
@@ -32,29 +38,46 @@ internal class KomgaMetadataCacheStore(
         }
     }
 
-    fun load(request: Request): Response? {
+    fun load(request: Request, minimumFetchedAt: Long = 0): Response? {
         if (!isEligible(request)) return null
 
-        val identity = request.cacheIdentity() ?: return null
-        val entry = readEntry(identity) ?: return null
-        return Response.Builder()
-            .request(request)
-            .protocol(okhttp3.Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .header("Content-Type", entry.contentType?.toString().orEmpty())
-            .header("X-Koharia-Offline-Cache", "metadata")
-            .body(entry.body.toResponseBody(entry.contentType))
-            .build()
+        val identity = request.cacheIdentity()?.let(::scopedIdentity) ?: return null
+        return synchronized(cacheLock) {
+            runCatching {
+                val metadata = metaFile(identity).readLines()
+                if (metadata.size < 3 || metadata[0] != identity) return@synchronized null
+                val fetchedAt = metadata[2].toLongOrNull() ?: return@synchronized null
+                if (fetchedAt < minimumFetchedAt) return@synchronized null
+                val file = bodyFile(identity)
+                if (!file.isFile) return@synchronized null
+                val type = metadata[1].toMediaTypeOrNull()
+                val length = file.length()
+                val opened = file.source().buffer()
+                val body = object : okhttp3.ResponseBody() {
+                    override fun contentType() = type
+                    override fun contentLength() = length
+                    override fun source() = opened
+                }
+                Response.Builder().request(request).protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(200).message("OK").header("Content-Type", metadata[1])
+                    .header("X-Koharia-Offline-Cache", "metadata").body(body).build()
+            }.getOrNull()
+        }
     }
 
-    fun save(request: Request, response: Response): Response {
-        if (!isEligible(request) || !response.isSuccessful) return response
+    fun save(request: Request, response: Response): Response = synchronized(cacheLock) {
+        if (!isEligible(request) || !response.isSuccessful) return@synchronized response
 
-        val identity = request.cacheIdentity() ?: return response
+        val identity = request.cacheIdentity()?.let(::scopedIdentity) ?: return@synchronized response
         val body = response.body
         val contentType = body.contentType()
-        val bodyBytes = body.bytes()
+        if (contentType?.subtype?.let { it == "json" || it.endsWith("+json") } != true) return@synchronized response
+        if (request.tag(KomgaCachePolicy::class.java) != null) {
+            return@synchronized cacheWhileReading(identity, response, contentType)
+        }
+        if (body.contentLength() > MAX_CACHE_BYTES) return@synchronized response
+        val bodyBytes = response.peekBody(MAX_CACHE_BYTES + 1).use { it.bytes() }
+        if (bodyBytes.size > MAX_CACHE_BYTES) return@synchronized response
 
         writeEntry(
             identity = identity,
@@ -62,10 +85,70 @@ internal class KomgaMetadataCacheStore(
             contentType = contentType,
         )
 
-        return response.newBuilder()
-            .body(bodyBytes.toResponseBody(contentType))
-            .build()
+        response
     }
+
+    private fun cacheWhileReading(identity: String, response: Response, type: MediaType?): Response {
+        val temporary = runCatching { File.createTempFile("shelf-", ".tmp", cacheDir) }.getOrNull() ?: return response
+        var output = runCatching { temporary.sink().buffer() }.getOrNull()
+        if (output == null) {
+            temporary.delete()
+            return response
+        }
+        var complete = false
+        val original = response.body
+        val stream = object : ForwardingSource(original.source()) {
+            override fun read(sink: Buffer, byteCount: Long): Long {
+                val read = super.read(sink, byteCount)
+                val target = output ?: return read
+                try {
+                    if (read > 0) {
+                        sink.copyTo(target.buffer, sink.size - read, read)
+                        target.emitCompleteSegments()
+                    } else if (read == -1L && !complete) {
+                        target.close()
+                        output = null
+                        synchronized(cacheLock) {
+                            val metadata = File.createTempFile("shelf-meta-", ".tmp", cacheDir)
+                            try {
+                                metadata.writeText("$identity\n${type.orEmptyText()}\n${System.currentTimeMillis()}\n")
+                                check(temporary.renameTo(bodyFile(identity)))
+                                check(metadata.renameTo(metaFile(identity)))
+                                complete = true
+                            } finally {
+                                metadata.delete()
+                            }
+                        }
+                    }
+                } catch (_: java.io.IOException) {
+                    runCatching { target.close() }
+                    output = null
+                    temporary.delete()
+                } catch (_: IllegalStateException) {
+                    output = null
+                    temporary.delete()
+                }
+                return read
+            }
+
+            override fun close() {
+                try {
+                    super.close()
+                } finally {
+                    runCatching { output?.close() }
+                    output = null
+                    if (!complete) temporary.delete()
+                }
+            }
+        }.buffer()
+        return response.newBuilder().body(object : okhttp3.ResponseBody() {
+            override fun contentType() = type
+            override fun contentLength() = original.contentLength()
+            override fun source() = stream
+        }).build()
+    }
+
+    private fun MediaType?.orEmptyText() = this?.toString().orEmpty()
 
     fun findLibraryId(contentUrl: String): String? {
         val content = readJsonObject(contentUrl) ?: return null
@@ -101,25 +184,33 @@ internal class KomgaMetadataCacheStore(
             ?.takeIf { it.isNotBlank() }
     }
 
-    private fun readJsonObject(url: String) = readEntry(url)
+    private fun scopedIdentity(identity: String): String = namespace().takeIf { it.isNotEmpty() }
+        ?.let { "$it:$identity" } ?: identity
+
+    private fun readJsonObject(url: String) = readEntry(scopedIdentity(url))
         ?.let { entry -> runCatching { Json.parseToJsonElement(entry.body.decodeToString()).jsonObject }.getOrNull() }
 
-    private fun readEntry(identity: String): CacheEntry? {
+    private fun readEntry(identity: String): CacheEntry? = synchronized(cacheLock) {
         val bodyFile = bodyFile(identity)
         val metaFile = metaFile(identity)
-        if (!bodyFile.exists() || !metaFile.exists()) return null
+        if (!bodyFile.exists() || !metaFile.exists() || bodyFile.length() > MAX_CACHE_BYTES) {
+            return@synchronized null
+        }
 
-        return runCatching {
+        runCatching {
             val metadata = metaFile.readLines()
             if (metadata.size < 3 || metadata[0] != identity) {
-                return null
+                return@synchronized null
             }
 
-            metadata[2].toLongOrNull() ?: return null
+            val fetchedAt = metadata[2].toLongOrNull() ?: return@synchronized null
 
             CacheEntry(
+                fetchedAt = fetchedAt,
                 contentType = metadata[1].ifBlank { null }?.toMediaTypeOrNull(),
-                body = bodyFile.readBytes(),
+                body =
+                bodyFile.source().buffer().use { it.readByteArray(minOf(bodyFile.length(), MAX_CACHE_BYTES + 1)) }
+                    .takeIf { it.size <= MAX_CACHE_BYTES } ?: return@synchronized null,
             )
         }.getOrNull()
     }
@@ -163,26 +254,31 @@ internal class KomgaMetadataCacheStore(
     }
 
     private data class CacheEntry(
+        val fetchedAt: Long,
         val contentType: MediaType?,
         val body: ByteArray,
     )
 
     companion object {
+        internal const val MAX_CACHE_BYTES = 2L * 1024 * 1024
+        private val cacheLock = Any()
+
         fun isEligibleUrl(url: String): Boolean {
-            if (!url.contains("/api/v1/")) return false
-            if (url.endsWith("/file")) return false
+            val path = url.toHttpUrlOrNull()?.encodedPath ?: return false
+            if (!path.contains("/api/v1/")) return false
+            if (path.endsWith("/file")) return false
             if (PAGE_IMAGE_REGEX.containsMatchIn(url)) return false
 
-            return url.contains("/api/v1/client-settings/") ||
-                url.contains("/api/v1/series") ||
-                (url.contains("/api/v1/books") && !url.contains("/pages/")) ||
-                url.contains("/api/v1/readlists") ||
-                url.contains("/api/v1/libraries") ||
-                url.contains("/api/v1/collections") ||
-                url.contains("/api/v1/genres") ||
-                url.contains("/api/v1/tags") ||
-                url.contains("/api/v1/publishers") ||
-                url.contains("/api/v1/authors")
+            return path.contains("/api/v1/client-settings/") ||
+                path.contains("/api/v1/series") ||
+                (path.contains("/api/v1/books") && !path.contains("/pages/")) ||
+                path.contains("/api/v1/readlists") ||
+                path.contains("/api/v1/libraries") ||
+                path.contains("/api/v1/collections") ||
+                path.contains("/api/v1/genres") ||
+                path.contains("/api/v1/tags") ||
+                path.contains("/api/v1/publishers") ||
+                path.contains("/api/v1/authors")
         }
 
         private val PAGE_IMAGE_REGEX = Regex("/pages/\\d+(?:\\?.*)?$")

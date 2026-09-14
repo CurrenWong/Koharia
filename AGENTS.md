@@ -123,3 +123,10 @@ Use proportional compile/tests for:
 - Komga progress/history synchronization
 - Scoped/global preferences and server deletion cleanup
 - Source API, extension loading, build logic, and version catalogs
+
+### Remote Shelf Cache Contract
+
+- All current and future server providers must persist successful shelf data and render existing cache on startup/resume without an automatic network refresh or TTL expiry.
+- Fetch shelf data only when the requested cache is missing, the user explicitly refreshes/changes server settings, or an actual server update event (such as SSE) invalidates it. Connectivity recovery alone does not invalidate cached data.
+- Keep valid empty caches distinct from missing caches. Retry initial failures without deleting prior successful data. Scope caches by connection/account and preserve read-progress synchronization as a separate pipeline.
+- Use `ConnectionShelfCachePolicy` and `ConnectionShelfUpdates`; test warm startup without server requests, cold-cache bootstrap, refresh failure retention, and account isolation for every new network provider.

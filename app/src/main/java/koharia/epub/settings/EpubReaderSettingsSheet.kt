@@ -1694,6 +1694,13 @@ private fun TapZoneSection(
         }
     }
 
+    if (currentReadingMode == EpubLayoutPreferences.ReadingMode.PAGINATED) {
+        tachiyomi.presentation.core.components.CheckboxItem(
+            label = stringResource(MR.strings.pref_swipe_page_turns),
+            pref = readerPreferences.swipePageTurns,
+        )
+    }
+
     if (navigationMode != 5) {
         ChipSection(title = stringResource(MR.strings.pref_read_with_tapping_inverted)) {
             ReaderPreferences.TappingInvertMode.entries.forEach { mode ->

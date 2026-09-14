@@ -167,7 +167,10 @@ class LanraragiSource(
         lifetime.launch {
             networkMonitor.available.collect { available ->
                 networkAvailable.value = available
-                if (available) retryPending()
+                if (available) {
+                    retryPending()
+                    refreshIfStale()
+                }
             }
         }
     }
@@ -181,7 +184,10 @@ class LanraragiSource(
             delay(1000)
             if (hasValidConnection()) {
                 retryPending()
-                if (lastRefreshAttempt == 0L) startRefresh()
+                while (repository.lastSync(id) == 0L) {
+                    refreshIfStale()
+                    delay(5_000)
+                }
             }
         }
     }
@@ -506,11 +512,13 @@ class LanraragiSource(
     suspend fun refreshIfStale() {
         val last = repository.lastSync(id)
         status.value = status.value.copy(completedAt = last)
-        val now = System.currentTimeMillis()
-        if (networkAvailable.value && now - lastRefreshAttempt >= 60_000 &&
-            (preferences.address != preferences.indexedAddress || now - last >= 60_000)
+        if (!Injekt.get<eu.kanade.domain.base.BasePreferences>().downloadedOnly.get() &&
+            koharia.connection.ConnectionShelfCachePolicy.shouldRefresh(
+                last > 0L,
+                koharia.connection.ConnectionShelfUpdates.version(id) > last,
+            )
         ) {
-            startRefresh()
+            if (System.currentTimeMillis() - lastRefreshAttempt >= 5_000) startRefresh()
         }
     }
 

@@ -6,8 +6,9 @@ import okhttp3.Response
 
 class KomgaCacheControlInterceptor(
     context: Context,
+    namespace: () -> String = { "" },
 ) : Interceptor {
-    private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext)
+    private val metadataCacheStore = KomgaMetadataCacheStore(context.applicationContext, namespace)
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()

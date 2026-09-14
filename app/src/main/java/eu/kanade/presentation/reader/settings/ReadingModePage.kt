@@ -89,6 +89,11 @@ private fun ColumnScope.PagerViewerSettings(
 
     ReaderSettingsGroupDivider()
 
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_swipe_page_turns),
+        pref = screenModel.preferences.swipePageTurns,
+    )
+
     val imageScaleType by screenModel.preferences.imageScaleType.collectAsState()
     SettingsChipRow(MR.strings.pref_image_scale_type) {
         ReaderPreferences.ImageScaleType.mapIndexed { index, it ->

@@ -167,7 +167,11 @@ internal class ComicPageFlipController(
                                 failSession(current, "resolve destination pager bounds")
                                 return@capturePager
                             }
-                            val destinationBounds = resolvePageBounds(current.targetItem, pagerBounds)
+                            // Both textures occupy the source page's GL surface. Cropping the next
+                            // image to its own bounds stretches it to the previous image's aspect
+                            // ratio until the surface disappears. Keep window coordinates identical;
+                            // the destination pager already draws any content outside this surface.
+                            val destinationBounds = current.pageBounds ?: pagerBounds
                             val destinationPage = cropToWindowBounds(destination, pagerBounds, destinationBounds)
                             if (destinationPage == null) {
                                 destination.recycle()

@@ -224,6 +224,17 @@ class KomgaSseClient(
 
     private fun handleEvent(target: KomgaSseConnectionTarget, type: String?, data: String) {
         if (type == null) return
+        if (type in setOf(
+                "BookAdded", "BookChanged", "BookUpdated", "BookDeleted",
+                "SeriesAdded", "SeriesChanged", "SeriesUpdated", "SeriesDeleted",
+                "LibraryAdded", "LibraryChanged", "LibraryUpdated", "LibraryDeleted",
+                "CollectionAdded", "CollectionChanged", "CollectionUpdated", "CollectionDeleted",
+                "ReadListAdded", "ReadListChanged", "ReadListUpdated", "ReadListDeleted",
+                "ReadProgressChanged", "ReadProgressDeleted",
+            )
+        ) {
+            koharia.connection.ConnectionShelfUpdates.notify(target.sourceId)
+        }
         when (type) {
             "ReadProgressChanged", "ReadProgressDeleted" -> {
                 val bookId = runCatching { JSONObject(data).optString("bookId") }

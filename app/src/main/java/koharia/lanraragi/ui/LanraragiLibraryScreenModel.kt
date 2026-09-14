@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -54,6 +55,19 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
     @Volatile private var searchRevision = 0L
 
     init {
+        screenModelScope.launch {
+            while (true) {
+                source.refreshIfStale()
+                delay(5_000)
+                if (source.repository.lastSync(source.id) > 0L) break
+            }
+        }
+        screenModelScope.launch {
+            koharia.connection.ConnectionShelfUpdates.changes.filter { it == source.id }.collectLatest {
+                delay(500)
+                refresh()
+            }
+        }
         screenModelScope.launch {
             source.networkAvailable.collectLatest { online ->
                 if (online && !state.value.downloadedOnly) source.refreshIfStale()
@@ -184,31 +198,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
                 error = null,
             )
         }
-        if (query.isBlank() || state.value.downloadedOnly || !source.networkAvailable.value) return
-        searchJob = screenModelScope.launch(Dispatchers.IO) {
-            try {
-                delay(250)
-                mutableState.update { it.copy(searching = true) }
-                val result = searchLanraragiWithFallback(source.networkAvailable.value) {
-                    source.api.search(query, category)
-                }
-                mutableState.update { current ->
-                    if (revision != searchRevision) {
-                        current
-                    } else {
-                        current.copy(
-                            searchEntries = result.orEmpty(),
-                            advancedResults = result?.mapTo(mutableSetOf()) { it.id },
-                        )
-                    }
-                }
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                if (revision == searchRevision) mutableState.update { it.copy(error = error) }
-            } finally {
-                if (revision == searchRevision) mutableState.update { it.copy(searching = false) }
-            }
-        }
+        // The persisted catalogue is authoritative until an explicit refresh or server event.
     }
 
     fun setToolbarQuery(query: String?) {

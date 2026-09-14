@@ -16,6 +16,12 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.File
 
+/**
+ * Server shelves must persist successful reads and use ConnectionShelfCachePolicy.
+ * Startup/resume/connectivity changes never invalidate existing shelf data. Only missing data,
+ * explicit user refresh/configuration changes and server update events permit fetching it again.
+ * A successfully cached empty response is data; failed/cancelled refreshes retain the old cache.
+ */
 interface ConnectionBrowseAdapter {
     fun availableContentScopes(): Set<LibraryContentScope> = setOf(LibraryContentScope.ALL)
 

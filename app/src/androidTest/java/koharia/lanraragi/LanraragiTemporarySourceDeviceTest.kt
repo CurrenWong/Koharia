@@ -63,8 +63,8 @@ class LanraragiTemporarySourceDeviceTest {
             assertEquals(entries.map { it.id }.toSet(), refreshed.map { it.id }.toSet())
             assertEquals(5, refreshed.count { it.kind == LanraragiEntry.Kind.ARCHIVE })
 
-            // Reproduce the observed fresh "categories only" cache. A newly registered
-            // source must repair it on first startup instead of skipping it for one minute.
+            // A published catalogue, including an empty shelf, is authoritative on startup.
+            // Explicit refresh can replace it, but registration must not fetch it again.
             val damagedGeneration = source.repository.lastSync(source.id) + 1
             source.repository.stage(
                 source.id,
@@ -78,6 +78,9 @@ class LanraragiTemporarySourceDeviceTest {
             val replacement = Injekt.get<ConnectionRegistry>().createSource(profile) as LanraragiSource
             try {
                 replacement.onRegistered()
+                delay(1500)
+                assertEquals(0, source.repository.entries(source.id).count { it.kind == LanraragiEntry.Kind.ARCHIVE })
+                replacement.refreshLibrary().getOrThrow()
                 withTimeout(15_000) {
                     while (source.repository.entries(source.id).count { it.kind == LanraragiEntry.Kind.ARCHIVE } != 5) {
                         delay(100)

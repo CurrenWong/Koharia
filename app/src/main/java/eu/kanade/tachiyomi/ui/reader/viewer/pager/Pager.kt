@@ -22,9 +22,9 @@ open class Pager(
     val horizontalPaging: Boolean = true,
 ) : DirectionalViewPager(context, horizontalPaging) {
 
-    /**
-     * Tap listener function to execute when a tap is detected.
-     */
+    var swipePageTurnsEnabled: () -> Boolean = { true }
+
+    /** Tap listener function to execute when a tap is detected. */
     var tapListener: ((MotionEvent) -> Unit)? = null
 
     /**
@@ -114,7 +114,7 @@ open class Pager(
     }
 
     private fun handlePageTurnSwipe(ev: MotionEvent): Boolean {
-        if (pageTurnSwipeListener == null || canInterceptPageTurnSwipe == null) {
+        if (!swipePageTurnsEnabled() || pageTurnSwipeListener == null || canInterceptPageTurnSwipe == null) {
             resetPageTurnSwipe()
             return false
         }
@@ -251,7 +251,7 @@ open class Pager(
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         // PhotoView can release interception before ScaleGestureDetector crosses its span slop.
         // Let the image keep the complete multi-pointer gesture instead of starting a page drag.
-        if (ev.pointerCount > 1) return false
+        if (!swipePageTurnsEnabled() || ev.pointerCount > 1) return false
         return try {
             super.onInterceptTouchEvent(ev)
         } catch (e: IllegalArgumentException) {
@@ -264,6 +264,7 @@ open class Pager(
      * [requestDisallowInterceptTouchEvent].
      */
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (!swipePageTurnsEnabled()) return false
         return try {
             super.onTouchEvent(ev)
         } catch (e: NullPointerException) {

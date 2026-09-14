@@ -25,7 +25,9 @@ import org.readium.r2.shared.util.resource.filename
 import org.readium.r2.shared.util.resource.mediaType
 import org.readium.r2.streamer.PublicationOpener
 import org.readium.r2.streamer.parser.DefaultPublicationParser
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URI
@@ -97,6 +99,7 @@ class KomgaEpubPublicationService(
                 manifestAsset.close()
                 throw IllegalStateException(it.message)
             }
+        openedPublication.requireReadableEpub(application.stringResource(MR.strings.epub_no_readable_chapters))
         val publicationWithPositions = openedPublication.withEpubPositionsController(cachedPositions)
         val publication = publicationWithPositions.publication
         logcat(LogPriority.DEBUG) {

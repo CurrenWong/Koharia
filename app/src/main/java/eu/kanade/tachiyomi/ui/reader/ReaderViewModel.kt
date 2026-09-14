@@ -765,6 +765,23 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    private fun scheduleRemoteProgressRetry(
+        adapter: ConnectionPageProgressAdapter,
+        manga: Manga,
+        readerChapter: ReaderChapter,
+    ) {
+        val chapterId = readerChapter.chapter.id ?: return
+        viewModelScope.launchIO {
+            kotlinx.coroutines.delay(5_000)
+            if (getCurrentChapter() !== readerChapter) {
+                withUIContext { remoteProgressChecksStarted.remove(chapterId) }
+                return@launchIO
+            }
+            if (incognitoMode) return@launchIO
+            refreshConnectionBookProgress(adapter, manga, readerChapter)
+        }
+    }
+
     private suspend fun refreshConnectionBookProgress(
         progressAdapter: ConnectionPageProgressAdapter,
         manga: Manga,
@@ -784,6 +801,7 @@ class ReaderViewModel @JvmOverloads constructor(
             logcat(LogPriority.WARN, error) {
                 "MangaStartup: remote progress check failed; keeping writes blocked chapterId=$chapterId"
             }
+            scheduleRemoteProgressRetry(progressAdapter, manga, readerChapter)
             return
         }
         logcat {
@@ -1506,7 +1524,10 @@ class ReaderViewModel @JvmOverloads constructor(
                         )
                     }.let { file -> { file.inputStream() } }
                 } else {
-                    checkNotNull(page.stream)
+                    page.stream ?: File.createTempFile("page-export-", ".png", context.cacheDir).also { file ->
+                        mergedFile = file
+                        writeReaderPageBitmap(page, file)
+                    }.let { file -> { file.inputStream() } }
                 }
                 val uri = imageSaver.save(
                     image = Image.Page(
@@ -1555,24 +1576,29 @@ class ReaderViewModel @JvmOverloads constructor(
         val manga = manga ?: return
 
         val context = Injekt.get<Application>()
-        val destDir = context.cacheImageDir
-
         val filename = generateFilename(manga, page)
 
-        try {
-            viewModelScope.launchNonCancellable {
-                destDir.deleteRecursively()
+        viewModelScope.launchNonCancellable {
+            var renderedFile: File? = null
+            try {
+                val input = page.stream ?: File.createTempFile("page-share-", ".png", context.cacheDir).also { file ->
+                    renderedFile = file
+                    writeReaderPageBitmap(page, file)
+                }.let { file -> { file.inputStream() } }
                 val uri = imageSaver.save(
                     image = Image.Page(
-                        inputStream = page.stream!!,
+                        inputStream = input,
                         name = filename,
                         location = Location.Cache,
                     ),
                 )
                 eventChannel.send(if (copyToClipboard) Event.CopyImage(uri) else Event.ShareImage(uri, page))
+            } catch (e: Throwable) {
+                logcat(LogPriority.ERROR, e)
+                eventChannel.send(Event.SavedImage(SaveImageResult.Error(e)))
+            } finally {
+                renderedFile?.delete()
             }
-        } catch (e: Throwable) {
-            logcat(LogPriority.ERROR, e)
         }
     }
 

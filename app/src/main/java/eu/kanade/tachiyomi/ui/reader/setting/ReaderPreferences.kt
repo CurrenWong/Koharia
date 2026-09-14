@@ -99,6 +99,8 @@ class ReaderPreferences(
 
     val cropBorders: Preference<Boolean> = preferenceStore.getBoolean("crop_borders", false)
 
+    val swipePageTurns = preferenceStore.getBoolean("swipe_page_turns", true)
+
     val navigateToPan: Preference<Boolean> = preferenceStore.getBoolean("navigate_pan", true)
 
     val landscapeZoom: Preference<Boolean> = preferenceStore.getBoolean("landscape_zoom", true)

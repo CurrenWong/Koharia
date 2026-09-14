@@ -20,6 +20,7 @@ internal fun epubNavigatorConfiguration(): EpubNavigatorFragment.Configuration {
             maxLineLength = Length.Rem(EPUB_MAX_LINE_LENGTH_REM),
         ),
         shouldApplyInsetsPadding = false,
+        disablePageTurnsWhileScrolling = true,
     )
 }
 
