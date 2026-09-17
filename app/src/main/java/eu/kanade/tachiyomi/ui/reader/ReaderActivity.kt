@@ -1012,6 +1012,10 @@ class ReaderActivity : BaseActivity() {
                     }
                     epubLayoutPreferences.theme.set(target)
                 },
+                onToggleTts = {
+                    // Manga reader has no chapter text — TTS is EPUB-only.
+                    // No-op: button still shows for visual consistency, but does nothing.
+                },
                 onToggleSettings = {
                     onPanelChange(
                         if (activePanel == EpubBottomPanel.SETTINGS) {

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -173,6 +174,7 @@ internal fun EpubReaderBottomArea(
     onNextChapter: () -> Unit,
     onOpenContents: () -> Unit,
     onToggleNightMode: () -> Unit,
+    onToggleTts: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleMore: () -> Unit,
     onOpenFontPicker: (() -> Unit)?,
@@ -279,6 +281,15 @@ internal fun EpubReaderBottomArea(
                             )
                         },
                         onClick = onToggleNightMode,
+                    )
+                    EpubActionButton(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = stringResource(MR.strings.tts_listen),
+                            )
+                        },
+                        onClick = onToggleTts,
                     )
                     EpubActionButton(
                         icon = {

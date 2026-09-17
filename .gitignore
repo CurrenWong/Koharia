@@ -20,4 +20,5 @@ keystore.properties
 
 # AI files
 .codex-work
+.omo
 /.tmp-*
