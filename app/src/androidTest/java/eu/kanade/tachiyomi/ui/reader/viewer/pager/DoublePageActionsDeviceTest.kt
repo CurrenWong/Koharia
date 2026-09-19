@@ -347,6 +347,7 @@ class DoublePageActionsDeviceTest {
                         0.01f,
                     )
                 }
+                assertZoomedJoinIsRendered(scenario, holder, images, "double tap")
                 scenario.onActivity {
                     descendants(holder).filterIsInstance<DoublePageLayout>().single().zoomAt(1f, 0f, 0f)
                 }
@@ -370,6 +371,10 @@ class DoublePageActionsDeviceTest {
                         if (firstOnLeft) holder.slot.first else holder.slot.second,
                         holder.pageAt((leftEdge - 20f).coerceAtLeast(0f), holder.height / 2f),
                     )
+                }
+                assertZoomedJoinIsRendered(scenario, holder, images, "pinch")
+                scenario.onActivity {
+                    val container = descendants(holder).filterIsInstance<DoublePageLayout>().single()
                     container.panLeft()
                     assertTrue("Pan left reaches boundary", !container.canPanLeft())
                     container.panRight()
@@ -408,6 +413,36 @@ class DoublePageActionsDeviceTest {
         if (node.text?.toString() == text) return node
         for (index in 0 until node.childCount) findText(node.getChild(index), text)?.let { return it }
         return null
+    }
+
+    private fun assertZoomedJoinIsRendered(
+        scenario: ActivityScenario<ReaderActivity>,
+        holder: PagerPageHolder,
+        images: List<SubsamplingScaleImageView>,
+        gesture: String,
+    ) {
+        var joinX = 0
+        var centerY = 0
+        scenario.onActivity {
+            val leftLocation = IntArray(2).also(images[0]::getLocationOnScreen)
+            val rightLocation = IntArray(2).also(images[1]::getLocationOnScreen)
+            val leftEdge = checkNotNull(images[0].sourceToViewCoord(images[0].sWidth.toFloat(), 0f)).x + leftLocation[0]
+            val rightEdge = checkNotNull(images[1].sourceToViewCoord(0f, 0f)).x + rightLocation[0]
+            joinX = ((leftEdge + rightEdge) / 2f).toInt()
+            centerY = IntArray(2).also(holder::getLocationOnScreen)[1] + holder.height / 2
+        }
+        val shot = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        try {
+            for (x in joinX - 1..joinX + 1) {
+                val pixel = shot.getPixel(x, centerY)
+                assertTrue(
+                    "$gesture exposed a black seam at $x",
+                    Color.red(pixel) > 200 || Color.green(pixel) > 200,
+                )
+            }
+        } finally {
+            shot.recycle()
+        }
     }
 
     private fun pinch(view: View) {

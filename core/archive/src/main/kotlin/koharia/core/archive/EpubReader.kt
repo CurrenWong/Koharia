@@ -43,7 +43,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
             val path = resolveZipPath(getParentDirectory(packageHref), decodePathHref(page.href))
             val document = getInputStream(path)?.use { Jsoup.parse(it, null, "") } ?: return@all false
             document.select("script,style").remove()
-            (document.body()?.text() ?: document.text()).isBlank()
+            document.body().text().isBlank()
         }
     }
 

@@ -104,6 +104,8 @@
     <string name="pref_komga_server_summary">配置当前连接的 Komga 服务器地址和认证信息</string>
     <string name="pref_connection_settings">连接设置</string>
     <string name="action_add_server">添加服务器</string>
+    <string name="action_add_komga_server">添加 Komga 服务器</string>
+    <string name="action_add_lanraragi">添加 LANraragi</string>
     <string name="action_use_local_folder">使用本地文件夹</string>
     <string name="delete_server">删除服务器</string>
     <string name="delete_server_confirmation">确定要删除服务器“%s”吗？</string>

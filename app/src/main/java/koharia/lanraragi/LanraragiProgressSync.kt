@@ -37,8 +37,12 @@ internal suspend fun synchronizeLanraragiProgress(
             if (!unchanged()) continue
             if (remote.isNew) clearNew(local.archiveId)
             local.copy(pageIndex = target - 1, totalPages = remote.pageCount, pending = false, initialPage = false)
-        } else {
+        } else if (local.initialPage) {
             remote.toReadState()
+        } else {
+            // A newer, different remote position must not erase unconfirmed local reading.
+            // The reader presents this conflict; background retries leave it pending.
+            continue
         }
         stateMutex.withLock {
             if (isCurrent() &&
@@ -52,7 +56,14 @@ internal suspend fun synchronizeLanraragiProgress(
 }
 
 internal fun shouldKeepLanraragiReading(local: LanraragiReadState, remote: LanraragiEntry): Boolean =
-    if (local.initialPage) remote.progress == 0 else localProgressWins(local, remote)
+    if (local.initialPage) remote.progress == 0 else !local.localUnread && local.readAt >= remote.lastRead
+
+internal fun hasLanraragiProgressConflict(local: LanraragiReadState?, remote: LanraragiEntry): Boolean =
+    local != null && local.pending && !local.localUnread && !local.initialPage &&
+        remote.lastRead > local.readAt && remote.progress > 0 && remote.progress != local.pageIndex + 1
+
+internal fun shouldSkipInitialLanraragiReading(previous: LanraragiReadState?): Boolean =
+    previous != null && !previous.localUnread && previous.pageIndex >= 0
 
 internal fun LanraragiEntry.toReadState() = LanraragiReadState(
     id,

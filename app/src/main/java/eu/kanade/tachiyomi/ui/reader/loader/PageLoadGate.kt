@@ -1,8 +1,11 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
+import kotlin.math.abs
+
 internal class PageLoadGate(
     private val preloadSize: Int = 2,
     private val prefetchOnActivate: Boolean = false,
+    private val prefetchPageCount: Int? = null,
 ) {
     private var activePageIndexes: Set<Int> = emptySet()
     private var logicalPageIndex: Int? = null
@@ -18,12 +21,17 @@ internal class PageLoadGate(
     fun activate(pageIndexes: Set<Int>, logicalPageIndex: Int, pageCount: Int): Activation {
         val normalizedIndexes = pageIndexes.filterTo(linkedSetOf()) { it in 0 until pageCount }
         val previousPageIndex = this.logicalPageIndex
+        val previousPageCount = activePageIndexes.size.coerceAtLeast(1)
         val changed = activePageIndexes != normalizedIndexes || previousPageIndex != logicalPageIndex
         if (previousPageIndex != null) {
             prefetchDirection = when {
                 logicalPageIndex < previousPageIndex -> Direction.BACKWARD
                 logicalPageIndex > previousPageIndex -> Direction.FORWARD
                 else -> prefetchDirection
+            }
+            val adjacentDistance = maxOf(previousPageCount, normalizedIndexes.size.coerceAtLeast(1))
+            if (abs(logicalPageIndex - previousPageIndex) > adjacentDistance) {
+                prefetchUnlocked = false
             }
         }
         activePageIndexes = normalizedIndexes
@@ -58,7 +66,8 @@ internal class PageLoadGate(
     private fun prefetchIndexes(pageCount: Int): List<Int> {
         if (pageCount <= 0) return emptyList()
         val logicalSpreadSize = activePageIndexes.size.coerceAtLeast(1)
-        val targetSize = logicalSpreadSize.coerceAtMost(preloadSize.coerceAtLeast(1))
+        val targetSize = prefetchPageCount?.coerceAtLeast(1)
+            ?: logicalSpreadSize.coerceAtMost(preloadSize.coerceAtLeast(1))
         return when (prefetchDirection) {
             Direction.FORWARD -> {
                 val first = (activePageIndexes.maxOrNull() ?: return emptyList()) + 1

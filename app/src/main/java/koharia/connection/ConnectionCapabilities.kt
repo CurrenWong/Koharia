@@ -39,6 +39,14 @@ interface ConnectionBrowseAdapter {
 interface ConnectionPageAdapter {
     val pageLoadConcurrency: Int
 
+    /** Whether adjacent requests may start before the visible page has been displayed. */
+    val pagePrefetchOnActivate: Boolean
+        get() = true
+
+    /** Optional fixed number of adjacent pages to queue after the visible page has been displayed. */
+    val pagePrefetchSize: Int?
+        get() = null
+
     /** Server page numbers must also identify pages in downloaded copies. */
     val preserveDownloadPageBoundaries: Boolean
         get() = false
@@ -424,6 +432,9 @@ interface ConnectionPageProgressAdapter {
 
 /** Persists confirmed local reading independently of network progress negotiation. */
 interface ConnectionLocalPageProgressAdapter {
+    /** Accept an explicitly selected remote snapshot without producing a new local reading event. */
+    suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {}
+
     suspend fun recordLocalPageProgress(
         chapterUrl: String,
         pageIndex: Int,
@@ -444,6 +455,7 @@ data class ConnectionPageProgressSnapshot(
     val updatedChapterMemo: JsonObject,
     val previousPublicationVersion: String?,
     val publicationVersion: String?,
+    val requiresConfirmation: Boolean = true,
 )
 
 interface ConnectionEpubProgressAdapter {

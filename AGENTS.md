@@ -17,6 +17,10 @@ Koharia is a Komga-focused Android reader forked from Mihon `0.19.9`. It uses Ko
 
 ### Formatting And Verification
 
+- Store agent/test-generated logs, screenshots, recordings, downloaded fixtures, temporary scripts, extracted sources, and diagnostic dumps under `<repo>/.test-artifacts/<task-or-date>/`. Create the directory before use; do not scatter these files in the repository root or create new `.codex-tmp`, `.codex-work`, `artifacts`, or `local-library-test` directories.
+- `.test-artifacts/` is Git-ignored. Keep permanent tests in the source test directories and curated, secret-free reports in `tools/`; do not force-add raw test artifacts. Standard Gradle outputs and caches may remain in their existing ignored build directories.
+- Use explicit output paths for test commands and scripts. After testing, remove disposable files belonging to that task; retain only useful diagnostic evidence in its task directory. Before recursive cleanup, verify resolved paths remain inside the intended directory and preserve Git worktrees, user files, credentials, installed device packages, and device app data.
+
 Use Windows commands:
 
 ```powershell

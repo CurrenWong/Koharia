@@ -26,6 +26,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 internal class GuidesStep(
     private val onAddServer: () -> Unit,
+    private val onAddLanraragi: () -> Unit,
     private val onAddLocalFolder: () -> Unit,
     private val onRestoreBackup: () -> Unit,
 ) : OnboardingStep {
@@ -51,7 +52,19 @@ internal class GuidesStep(
                     contentDescription = null,
                     modifier = Modifier.padding(end = 8.dp),
                 )
-                Text(stringResource(MR.strings.action_add_server))
+                Text(stringResource(MR.strings.action_add_komga_server))
+            }
+
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onAddLanraragi,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Add,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(stringResource(MR.strings.action_add_lanraragi))
             }
 
             HorizontalDivider(
@@ -99,6 +112,7 @@ private fun GuidesStepPreview() {
     TachiyomiPreviewTheme {
         GuidesStep(
             onAddServer = {},
+            onAddLanraragi = {},
             onAddLocalFolder = {},
             onRestoreBackup = {},
         ).Content()

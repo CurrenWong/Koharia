@@ -40,8 +40,20 @@ class ChapterLoader(
      * Assigns the chapter's page loader and loads the its pages. Returns immediately if the chapter
      * is already loaded.
      */
-    suspend fun loadChapter(chapter: ReaderChapter, initialPageIndex: Int? = null) {
+    suspend fun loadChapter(
+        chapter: ReaderChapter,
+        initialPageIndex: Int? = null,
+        beforePageActivation: (suspend (ReaderChapter, List<ReaderPage>) -> Unit)? = null,
+    ) {
         if (chapterIsReady(chapter)) {
+            if (beforePageActivation != null) {
+                val pages = chapter.pages ?: return
+                beforePageActivation(chapter, pages)
+                val resolvedPages = chapter.pages ?: pages
+                chapter.pageLoader?.setActivePage(
+                    resolvedPages[chapter.requestedPage.coerceIn(0, resolvedPages.lastIndex)],
+                )
+            }
             return
         }
 
@@ -70,7 +82,9 @@ class ChapterLoader(
                 }
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
-                loader.setActivePage(pages[chapter.requestedPage.coerceIn(0, pages.lastIndex)])
+                beforePageActivation?.invoke(chapter, pages)
+                val resolvedPages = chapter.pages ?: pages
+                loader.setActivePage(resolvedPages[chapter.requestedPage.coerceIn(0, resolvedPages.lastIndex)])
             } catch (e: Throwable) {
                 chapter.state = ReaderChapter.State.Error(e)
                 throw e

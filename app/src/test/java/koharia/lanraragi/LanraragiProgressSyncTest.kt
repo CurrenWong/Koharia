@@ -116,11 +116,37 @@ class LanraragiProgressSyncTest {
     }
 
     @Test
-    fun `newer remote activity wins without uploading stale offline position`() = runTest {
+    fun `newer different remote activity preserves pending local choice`() = runTest {
         sync(listOf(local), remote.copy(lastRead = 300))
         assertTrue(writes.isEmpty())
-        assertEquals(7, applied.single().pageIndex)
-        assertEquals(300L, applied.single().readAt)
+        assertTrue(applied.isEmpty())
+        coVerify(exactly = 0) { repository.record(any(), any()) }
+        assertTrue(hasLanraragiProgressConflict(local, remote.copy(lastRead = 300)))
+    }
+
+    @Test
+    fun `only newer different remote progress conflicts with actual pending reading`() {
+        assertFalse(hasLanraragiProgressConflict(local, remote))
+        assertFalse(hasLanraragiProgressConflict(local, remote.copy(lastRead = local.readAt)))
+        assertFalse(hasLanraragiProgressConflict(local, remote.copy(lastRead = 300, progress = 3)))
+        assertFalse(hasLanraragiProgressConflict(local.copy(pending = false), remote.copy(lastRead = 300)))
+        assertFalse(hasLanraragiProgressConflict(local.copy(localUnread = true), remote.copy(lastRead = 300)))
+    }
+
+    @Test
+    fun `initial display is recorded for unread overrides and never read archives`() {
+        assertFalse(shouldSkipInitialLanraragiReading(null))
+        assertFalse(shouldSkipInitialLanraragiReading(remote.copy(progress = 0, lastRead = 0).toReadState()))
+        assertFalse(shouldSkipInitialLanraragiReading(local.copy(localUnread = true, pending = false)))
+        assertTrue(shouldSkipInitialLanraragiReading(local.copy(pending = false)))
+        assertTrue(shouldSkipInitialLanraragiReading(local))
+    }
+
+    @Test
+    fun `equal timestamp keeps local pending reading`() = runTest {
+        sync(listOf(local), remote.copy(lastRead = local.readAt))
+        assertEquals(listOf(3), writes)
+        assertFalse(applied.single().pending)
     }
 
     @Test

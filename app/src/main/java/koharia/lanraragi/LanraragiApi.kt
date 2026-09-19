@@ -1,5 +1,6 @@
 package koharia.lanraragi
 
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.network.await
 import koharia.domain.lanraragi.LanraragiEntry
 import kotlinx.coroutines.CancellationException
@@ -78,11 +79,12 @@ class LanraragiApi(
     private val apiKey: String,
     networkClient: OkHttpClient,
     private val json: Json,
+    diagnosticConnectionId: Long? = null,
 ) {
     val base: HttpUrl = normalizeBase(baseUrl)
 
     @Volatile private var closed = false
-    val client = networkClient.newBuilder()
+    private val clientBuilder = networkClient.newBuilder()
         .cache(null)
         .dispatcher(Dispatcher())
         .dns(Dns.SYSTEM)
@@ -98,7 +100,20 @@ class LanraragiApi(
             }.build()
             chain.proceed(authorized)
         }
-        .build()
+
+    init {
+        if (BuildConfig.LANRARAGI_DIAGNOSTICS) {
+            val inheritedFactory = networkClient.eventListenerFactory
+            clientBuilder.eventListenerFactory { call ->
+                inheritedFactory.create(call) + LanraragiNetworkTimingEventListener(
+                    call = call,
+                    connectionId = diagnosticConnectionId,
+                )
+            }
+        }
+    }
+
+    val client = clientBuilder.build()
 
     // Large pages may transfer continuously for longer than the metadata request deadline.
     // Keep inactivity timeouts and the shared dispatcher so connection reload still cancels them.

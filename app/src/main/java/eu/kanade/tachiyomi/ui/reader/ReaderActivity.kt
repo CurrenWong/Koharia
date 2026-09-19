@@ -875,7 +875,8 @@ class ReaderActivity : BaseActivity() {
             visiblePageStart = state.visiblePageStart,
             visiblePageEnd = state.visiblePageEnd.takeIf { it > 0 } ?: state.currentPage,
             totalPages = state.totalPages,
-            onPageIndexChange = {
+            onPageIndexChange = ::moveToPageIndex,
+            onPageIndexChangeFinished = {
                 isScrollingThroughPages = true
                 moveToPageIndex(it)
             },

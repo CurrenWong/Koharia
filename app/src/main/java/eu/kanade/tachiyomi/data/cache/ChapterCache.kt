@@ -32,6 +32,14 @@ class ChapterCache(
     private val json: Json,
 ) {
 
+    data class ImageCacheDiagnostics(
+        val entryPresent: Boolean,
+        val filePresent: Boolean,
+        val fileBytes: Long,
+        val cacheBytes: Long,
+        val maxCacheBytes: Long,
+    )
+
     /** Cache class used for cache management. */
     private val diskCache = openDiskCache(context)
 
@@ -188,6 +196,23 @@ class ChapterCache(
         } catch (_: IOException) {
             false
         }
+    }
+
+    fun inspectImageCache(imageUrl: String): ImageCacheDiagnostics {
+        val key = DiskUtil.hashKeyForDisk(imageUrl)
+        val entryPresent = try {
+            diskCache.get(key).use { it != null }
+        } catch (_: IOException) {
+            false
+        }
+        val file = File(diskCache.directory, "$key.0")
+        return ImageCacheDiagnostics(
+            entryPresent = entryPresent,
+            filePresent = file.isFile,
+            fileBytes = file.takeIf(File::isFile)?.length() ?: 0L,
+            cacheBytes = diskCache.size(),
+            maxCacheBytes = diskCache.maxSize,
+        )
     }
 
     /**

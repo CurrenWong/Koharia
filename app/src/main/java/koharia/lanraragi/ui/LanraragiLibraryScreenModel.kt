@@ -17,6 +17,7 @@ import koharia.source.lanraragi.LanraragiSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,6 +52,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
     private val downloads: DownloadManager = Injekt.get()
     private val basePreferences: BasePreferences = Injekt.get()
     private var searchJob: Job? = null
+    private var progressJob: Job? = null
 
     @Volatile private var searchRevision = 0L
 
@@ -72,7 +74,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
             source.networkAvailable.collectLatest { online ->
                 if (online && !state.value.downloadedOnly) source.refreshIfStale()
                 search(state.value.filter.query)
-                if (online) source.retryPending()
+                if (online) refreshProgress()
             }
         }
         screenModelScope.launch {
@@ -177,11 +179,28 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
         if (state.value.downloadedOnly) return
         screenModelScope.launch(Dispatchers.IO) {
             if (!automatic || source.networkAvailable.value) {
-                if (automatic) source.refreshIfStale() else source.startRefresh()
-                source.retryPending()
+                if (automatic) {
+                    source.refreshIfStale()
+                    refreshProgress()
+                } else {
+                    progressJob?.cancelAndJoin()
+                    source.startRefresh()
+                }
             }
         }
         if (!automatic || state.value.filter.query.isNotBlank()) search(state.value.filter.query)
+    }
+
+    private fun refreshProgress() {
+        if (state.value.downloadedOnly || progressJob?.isActive == true) return
+        progressJob = screenModelScope.launch(Dispatchers.IO) {
+            try {
+                source.refreshShelfProgress()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                mutableState.update { it.copy(error = error) }
+            }
+        }
     }
 
     fun search(query: String) {

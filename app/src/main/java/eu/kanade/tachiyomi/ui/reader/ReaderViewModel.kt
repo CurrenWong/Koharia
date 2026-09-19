@@ -505,7 +505,7 @@ class ReaderViewModel @JvmOverloads constructor(
         chapter: ReaderChapter,
         initialPageIndex: Int? = null,
     ): ViewerChapters {
-        loader.loadChapter(chapter, initialPageIndex)
+        loader.loadChapter(chapter, initialPageIndex, ::resolveConnectionProgressBeforePageActivation)
         persistDocumentPageCount(chapter)
 
         val chapterPos = chapterList.indexOf(chapter)
@@ -529,6 +529,30 @@ class ReaderViewModel @JvmOverloads constructor(
             }
         }
         return newChapters
+    }
+
+    private suspend fun resolveConnectionProgressBeforePageActivation(
+        readerChapter: ReaderChapter,
+        pages: List<ReaderPage>,
+    ) {
+        if (incognitoMode || readerChapter.pageLoader?.supportsRemoteProgress == false) return
+        val manga = manga ?: return
+        val adapter = connectionPageProgressAdapter() ?: return
+        if (adapter !is koharia.connection.ConnectionLocalPageProgressAdapter) return
+        val chapterId = readerChapter.chapter.id ?: return
+        synchronized(remoteProgressOpeningPages) {
+            remoteProgressOpeningPages.putIfAbsent(
+                chapterId,
+                readerChapter.requestedPage.coerceIn(0, pages.lastIndex),
+            )
+        }
+        if (!remoteProgressChecksStarted.add(chapterId)) return
+        refreshConnectionBookProgress(
+            progressAdapter = adapter,
+            manga = manga,
+            readerChapter = readerChapter,
+            beforePageActivation = true,
+        )
     }
 
     private suspend fun persistDocumentPageCount(chapter: ReaderChapter) {
@@ -786,6 +810,7 @@ class ReaderViewModel @JvmOverloads constructor(
         progressAdapter: ConnectionPageProgressAdapter,
         manga: Manga,
         readerChapter: ReaderChapter,
+        beforePageActivation: Boolean = false,
     ) {
         if (readerChapter.pageLoader?.supportsRemoteProgress == false) return
         val chapter = readerChapter.chapter
@@ -861,9 +886,11 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             readerChapter.state = ReaderChapter.State.Loaded(refreshedPages)
             pages = refreshedPages
-            val activePage = pages[readerChapter.requestedPage.coerceIn(0, pages.lastIndex)]
-            pageLoader.setActivePage(activePage)
-            eventChannel.trySend(Event.ReloadViewerChapters)
+            if (!beforePageActivation) {
+                val activePage = pages[readerChapter.requestedPage.coerceIn(0, pages.lastIndex)]
+                pageLoader.setActivePage(activePage)
+                eventChannel.trySend(Event.ReloadViewerChapters)
+            }
         }
 
         if (remote.totalPages > 0 && remote.totalPages != pages.size) {
@@ -873,7 +900,7 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             return
         }
-        if (getCurrentChapter() !== readerChapter) return
+        if (!beforePageActivation && getCurrentChapter() !== readerChapter) return
 
         val legacyEpubProgress = if (opensAsImagePages && remote.pageIndex == null && !remote.completed) {
             runCatching {
@@ -917,14 +944,16 @@ class ReaderViewModel @JvmOverloads constructor(
         ) {
             RemoteProgressDecision.SAME_LOCATION -> {
                 allowRemoteProgressWrites(chapterId)
-                if (migratesLegacyEpubProgress) {
+                if (!beforePageActivation && migratesLegacyEpubProgress) {
                     pushPageProgressIfAllowed(readerChapter, localPageIndex, pages.size)
                 }
                 return
             }
             RemoteProgressDecision.KEEP_LOCAL -> {
                 allowRemoteProgressWrites(chapterId)
-                pushPageProgressIfAllowed(readerChapter, localPageIndex, pages.size)
+                if (!beforePageActivation) {
+                    pushPageProgressIfAllowed(readerChapter, localPageIndex, pages.size)
+                }
                 return
             }
             RemoteProgressDecision.KEEP_REMOTE -> Unit
@@ -943,18 +972,60 @@ class ReaderViewModel @JvmOverloads constructor(
         }
         if (!shouldShow) return
 
-        mutableState.update {
-            it.copy(
-                remoteProgressConflict = MangaRemoteProgressConflict(
-                    chapterId = chapterId,
-                    localPageIndex = localPageIndex,
-                    localTotalPages = pages.size,
-                    remotePageIndex = remotePageIndex,
-                    remoteTotalPages = remote.totalPages.takeIf { count -> count > 0 } ?: pages.size,
-                    remoteVersion = remoteVersion,
-                    migratesLegacyEpubProgress = migratesLegacyEpubProgress,
+        val conflict = MangaRemoteProgressConflict(
+            chapterId = chapterId,
+            localPageIndex = localPageIndex,
+            localTotalPages = pages.size,
+            remotePageIndex = remotePageIndex,
+            remoteTotalPages = remote.totalPages.takeIf { count -> count > 0 } ?: pages.size,
+            remoteVersion = remoteVersion,
+            migratesLegacyEpubProgress = migratesLegacyEpubProgress,
+            remoteReadAt = remoteUpdatedAtMillis,
+        )
+        when {
+            remote.requiresConfirmation -> {
+                mutableState.update { it.copy(remoteProgressConflict = conflict) }
+            }
+            beforePageActivation -> applyRemoteProgressBeforePageActivation(readerChapter, pages, conflict)
+            else -> {
+                mutableState.update { it.copy(remoteProgressConflict = conflict) }
+                withUIContext { useRemoteProgress() }
+            }
+        }
+    }
+
+    private suspend fun applyRemoteProgressBeforePageActivation(
+        readerChapter: ReaderChapter,
+        pages: List<ReaderPage>,
+        conflict: MangaRemoteProgressConflict,
+    ) {
+        val targetPage = pages.getOrNull(conflict.remotePageIndex) ?: return
+        readerChapter.requestedPage = targetPage.index
+        readerChapter.chapter.last_page_read = targetPage.index
+        chapterPageIndex = targetPage.index
+        synchronized(remoteProgressOpeningPages) {
+            remoteProgressOpeningPages[conflict.chapterId] = targetPage.index
+        }
+        allowRemoteProgressWrites(conflict.chapterId)
+        if (incognitoMode) return
+        runCatching {
+            (connectionPageProgressAdapter() as? koharia.connection.ConnectionLocalPageProgressAdapter)
+                ?.acceptRemotePageProgress(
+                    readerChapter.chapter.url,
+                    targetPage.index,
+                    pages.size,
+                    conflict.remoteReadAt ?: 0L,
+                )
+            updateChapter.await(
+                ChapterUpdate(
+                    id = conflict.chapterId,
+                    read = conflict.remotePageIndex == pages.lastIndex,
+                    lastPageRead = conflict.remotePageIndex.toLong(),
                 ),
             )
+        }.onFailure { error ->
+            if (error is CancellationException) throw error
+            logcat(LogPriority.WARN, error) { "Failed to persist remote progress before page activation" }
         }
     }
 
@@ -1069,6 +1140,13 @@ class ReaderViewModel @JvmOverloads constructor(
         state.value.viewer?.restorePage(targetPage)
         if (!incognitoMode) {
             viewModelScope.launchNonCancellable {
+                (connectionPageProgressAdapter() as? koharia.connection.ConnectionLocalPageProgressAdapter)
+                    ?.acceptRemotePageProgress(
+                        currentChapter.chapter.url,
+                        targetPage.index,
+                        pages.size,
+                        conflict.remoteReadAt ?: 0L,
+                    )
                 updateChapter.await(
                     ChapterUpdate(
                         id = conflict.chapterId,

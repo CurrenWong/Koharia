@@ -18,6 +18,7 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import koharia.connection.ConnectionPreferences
@@ -95,6 +96,115 @@ class LanraragiConnectionDeviceTest {
                 }
             ) {
                 connectionPreferences.activeConnectionId.set(previousActive)
+            }
+        }
+    }
+
+    @Test
+    fun shelfProgressPreservesPendingConflictsUntilReaderChoice() = runBlocking(Dispatchers.IO) {
+        assertEquals("app.koharia.dev.devicefixture", context.packageName)
+        withConnection("v80_test_progress_choice") { source ->
+            val entry = source.repository.entries(source.id).first { it.kind == LanraragiEntry.Kind.ARCHIVE }
+            val manga = source.materialize(entry)
+            Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
+            val chapter = chapters.getChapterByMangaId(manga.id).single()
+            val catalogTime = source.repository.lastSync(source.id)
+            source.api.pushProgress(entry.id, 2)
+            source.refreshShelfProgress()
+            assertEquals(1L, chapters.getChapterByMangaId(manga.id).single().lastPageRead)
+            assertEquals(catalogTime, source.repository.lastSync(source.id))
+
+            val remote = source.api.archive(entry.id)
+            val pending = koharia.domain.lanraragi.LanraragiReadState(entry.id, 0, 3, remote.lastRead - 1000)
+            source.repository.record(source.id, pending)
+            source.refreshShelfProgress()
+            assertTrue(source.repository.readStates(source.id).single { it.archiveId == entry.id }.pending)
+            val conflict = checkNotNull(source.pullPageProgress(chapter.url, chapter.memo))
+            assertTrue(conflict.requiresConfirmation)
+            assertEquals(1, conflict.pageIndex)
+            assertEquals(0, source.repository.readStates(source.id).single { it.archiveId == entry.id }.pageIndex)
+
+            source.acceptRemotePageProgress(chapter.url, 1, 3, remote.lastRead)
+            assertFalse(source.repository.readStates(source.id).single { it.archiveId == entry.id }.pending)
+            assertFalse(checkNotNull(source.pullPageProgress(chapter.url, chapter.memo)).requiresConfirmation)
+            source.repository.record(source.id, pending.copy(readAt = remote.lastRead + 1000))
+            val local = checkNotNull(source.pullPageProgress(chapter.url, chapter.memo))
+            assertFalse(local.requiresConfirmation)
+            assertEquals(0, local.pageIndex)
+        }
+    }
+
+    @Test
+    fun readerAppliesRemoteProgressBeforeLoadingItsFirstImage() = runBlocking(Dispatchers.IO) {
+        assertEquals("app.koharia.dev.devicefixture", context.packageName)
+        withConnection("v80_test_progress_choice") { source ->
+            val entry = source.repository.entries(source.id).first { it.kind == LanraragiEntry.Kind.ARCHIVE }
+            val manga = source.materialize(entry)
+            Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
+            val chapter = chapters.getChapterByMangaId(manga.id).single()
+            source.api.pushProgress(entry.id, 2)
+            Injekt.get<koharia.connection.ConnectionScopedPreferenceStoreFactory>()
+                .readerPreferences(source.id)
+                .apply {
+                    showNavigationOverlayNewUser.set(false)
+                    showNavigationOverlayOnStart.set(false)
+                }
+
+            ActivityScenario.launch<ReaderActivity>(
+                ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId = source.id),
+            ).use { scenario ->
+                withTimeout(20_000) {
+                    while (true) {
+                        var ready = false
+                        scenario.onActivity { activity ->
+                            val state = activity.viewModel.state.value
+                            ready = state.currentPage == 2 &&
+                                state.currentChapter?.pages?.getOrNull(1)?.status ==
+                                eu.kanade.tachiyomi.source.model.Page.State.Ready
+                        }
+                        if (ready) break
+                        delay(100)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun firstDisplayedUnreadArchiveClearsNewAfterProgressPrecheck() = runBlocking(Dispatchers.IO) {
+        assertEquals("app.koharia.dev.devicefixture", context.packageName)
+        withConnection("v80") { source ->
+            val entry = source.repository.entries(source.id).first { it.kind == LanraragiEntry.Kind.ARCHIVE }
+            val manga = source.materialize(entry)
+            Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
+            val chapter = chapters.getChapterByMangaId(manga.id).single()
+            assertTrue(source.api.archive(entry.id).isNew)
+            Injekt.get<koharia.connection.ConnectionScopedPreferenceStoreFactory>()
+                .readerPreferences(source.id)
+                .apply {
+                    showNavigationOverlayNewUser.set(false)
+                    showNavigationOverlayOnStart.set(false)
+                }
+
+            ActivityScenario.launch<ReaderActivity>(
+                ReaderActivity.newIntent(context, manga.id, chapter.id, sourceId = source.id),
+            ).use { scenario ->
+                withTimeout(20_000) {
+                    while (true) {
+                        var ready = false
+                        scenario.onActivity { activity ->
+                            val state = activity.viewModel.state.value
+                            ready = state.currentPage == 1 &&
+                                state.currentChapter?.pages?.firstOrNull()?.status ==
+                                eu.kanade.tachiyomi.source.model.Page.State.Ready
+                        }
+                        if (ready) break
+                        delay(100)
+                    }
+                }
+                withTimeout(20_000) {
+                    while (source.api.archive(entry.id).isNew) delay(250)
+                }
             }
         }
     }

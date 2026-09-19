@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.graphics.RectF
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -9,6 +10,8 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
+import kotlin.math.ceil
+import kotlin.math.floor
 
 internal class DoublePageLayout(
     context: Context,
@@ -142,8 +145,18 @@ internal class DoublePageLayout(
     }
 
     override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+        val childBounds = bounds[indexOfChild(child)]
+        // Hardware clips round fractional edges inward. When zoom puts the shared edge between
+        // physical pixels, independently clipping both pages can expose one pixel of the parent
+        // background. Round outward so the clips meet (and overlap by at most one pixel).
+        val clipBounds = Rect(
+            floor(childBounds.left).toInt(),
+            floor(childBounds.top).toInt(),
+            ceil(childBounds.right).toInt(),
+            ceil(childBounds.bottom).toInt(),
+        )
         val save = canvas.save()
-        canvas.clipRect(bounds[indexOfChild(child)])
+        canvas.clipRect(clipBounds)
         return try {
             super.drawChild(canvas, child, drawingTime)
         } finally {

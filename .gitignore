@@ -21,3 +21,6 @@ keystore.properties
 # AI files
 .codex-work
 /.tmp-*
+
+# Local test logs, screenshots, fixtures, and diagnostic scratch files
+/.test-artifacts/

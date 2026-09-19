@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.source.model.Page
@@ -49,11 +50,12 @@ internal class HttpPageLoader(
     /** A priority queue whose concurrency is selected by the connection provider. */
     private val queue = PriorityBlockingQueue<PriorityPage>()
 
-    // Start the next-page request as soon as the active page is selected. The active page still
-    // wins in the priority queue, while the spare connection can warm the next page.
+    // LANraragi can perform expensive archive work for each uncached page. Keep both workers
+    // available to the visible spread until it is displayed, then start adjacent prefetching.
     private val pageLoadGate = PageLoadGate(
         preloadSize = 2,
-        prefetchOnActivate = connectionPageAdapter != null,
+        prefetchOnActivate = connectionPageAdapter?.pagePrefetchOnActivate == true,
+        prefetchPageCount = connectionPageAdapter?.pagePrefetchSize,
     )
     private val schedulerLock = Any()
     private val scheduledPages = Collections.newSetFromMap(IdentityHashMap<ReaderPage, Boolean>())
@@ -223,6 +225,11 @@ internal class HttpPageLoader(
         )
         val needsUrgentLoad = activePages.any { it.status != Page.State.Ready }
         preemptLoadsOutside(activeSet, reason = "active-pages-changed")
+        if (activation.changed) {
+            activePages.firstOrNull { it.status == Page.State.Queue }?.let {
+                preemptPrefetchFor(it, reason = "visible-spread-changed")
+            }
+        }
         synchronized(schedulerLock) {
             removeQueuedPagesLocked { queued ->
                 (queued.priority == PriorityPage.ADJACENT && queued.page !in activeSet) ||
@@ -447,16 +454,42 @@ internal class HttpPageLoader(
             }
             val imageUrl = page.imageUrl!!
 
-            val imageInCache = if (force) false else chapterCache.isImageInCache(imageUrl)
+            val cacheDiagnostics = if (BuildConfig.LANRARAGI_DIAGNOSTICS && connectionPageAdapter != null) {
+                chapterCache.inspectImageCache(imageUrl)
+            } else {
+                null
+            }
+            val imageInCache = if (force) {
+                false
+            } else {
+                cacheDiagnostics?.entryPresent ?: chapterCache.isImageInCache(imageUrl)
+            }
             logcat {
                 "KohariaOfflineDebug: image cache check " +
                     "chapterId=${chapter.chapter.id} page=${page.number} " +
                     "force=$force imageInCache=$imageInCache imageUrl=$imageUrl"
             }
+            cacheDiagnostics?.let { cache ->
+                logcat {
+                    "LanraragiCache: phase=lookup chapterId=${chapter.chapter.id} page=${page.number} " +
+                        "entry=${cache.entryPresent} file=${cache.filePresent} fileBytes=${cache.fileBytes} " +
+                        "cacheBytes=${cache.cacheBytes} maxCacheBytes=${cache.maxCacheBytes} force=$force"
+                }
+            }
             if (force || !imageInCache) {
                 page.status = Page.State.DownloadImage
                 val imageResponse = source.getImage(page)
+                val cacheWriteStartedAt = System.nanoTime()
                 chapterCache.putImageToCache(imageUrl, imageResponse)
+                if (BuildConfig.LANRARAGI_DIAGNOSTICS && connectionPageAdapter != null) {
+                    val cache = chapterCache.inspectImageCache(imageUrl)
+                    logcat {
+                        "LanraragiCache: phase=write chapterId=${chapter.chapter.id} page=${page.number} " +
+                            "elapsedMs=${(System.nanoTime() - cacheWriteStartedAt) / 1_000_000} " +
+                            "entry=${cache.entryPresent} file=${cache.filePresent} fileBytes=${cache.fileBytes} " +
+                            "cacheBytes=${cache.cacheBytes} maxCacheBytes=${cache.maxCacheBytes}"
+                    }
+                }
             }
 
             page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }

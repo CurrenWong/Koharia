@@ -1,6 +1,7 @@
 package koharia.source.lanraragi
 
 import android.content.Context
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
@@ -16,6 +17,7 @@ import uy.kohesive.injekt.api.get
 class LanraragiConnectionProvider(private val context: Context) : ConnectionProvider {
     override val id = ID
     override val displayName = "LANraragi"
+    override val iconRes = R.drawable.brand_lanraragi
     override val configuresConnectionNameInSettings = true
     override val deletionMessage = tachiyomi.i18n.MR.strings.lanraragi_remove_connection
     override fun createSource(profile: LibraryConnectionProfile): LanraragiSource {

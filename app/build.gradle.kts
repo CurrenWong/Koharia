@@ -81,6 +81,7 @@ android {
         buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLatestCommitTime = false)}\"")
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
+        buildConfigField("boolean", "LANRARAGI_DIAGNOSTICS", "false")
 
         testInstrumentationRunner = "koharia.testing.KohariaDeviceTestRunner"
     }
@@ -93,6 +94,7 @@ android {
 
     buildTypes {
         val debug = getByName("debug") {
+            buildConfigField("boolean", "LANRARAGI_DIAGNOSTICS", "true")
             applicationIdSuffix = when {
                 useEInkDeviceFixture -> ".dev.einkfixture"
                 useDeviceTestFixture -> ".dev.devicefixture"

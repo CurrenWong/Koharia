@@ -54,6 +54,7 @@ import koharia.lanraragi.filterLanraragiCatalog
 import koharia.lanraragi.flattenLanraragiTank
 import koharia.lanraragi.localProgressWins
 import koharia.lanraragi.shouldKeepLanraragiReading
+import koharia.lanraragi.shouldSkipInitialLanraragiReading
 import koharia.lanraragi.synchronizeLanraragiProgress
 import koharia.lanraragi.ui.LanraragiLibraryScreen
 import kotlinx.coroutines.CancellationException
@@ -80,6 +81,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import logcat.LogPriority
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
@@ -201,7 +203,7 @@ class LanraragiSource(
             apiInstance?.close()
             apiInstance = null
         }
-        apiInstance ?: LanraragiApi(address, credential, network.client, json).also {
+        apiInstance ?: LanraragiApi(address, credential, network.client, json, diagnosticConnectionId = id).also {
             apiAddress = address
             apiCredential = credential
             apiInstance = it
@@ -210,6 +212,8 @@ class LanraragiSource(
     override val baseUrl: String get() = preferences.address.trimEnd('/')
     override val client get() = api.imageClient
     override val pageLoadConcurrency = 2
+    override val pagePrefetchOnActivate = false
+    override val pagePrefetchSize: Int? = 2
     override val preserveDownloadPageBoundaries = true
     override val allowsUnvalidatedNetwork = true
     override val usesSharedDownloadStorage = false
@@ -250,10 +254,7 @@ class LanraragiSource(
 
     override fun hasValidConnection() = runCatching { LanraragiApi.normalizeBase(preferences.address) }.isSuccess
     override suspend fun isConnectionReachable() = runCatching { api.serverInfo(true) }.isSuccess
-    override suspend fun getAccount(): ConnectionAccount? {
-        if (!hasValidConnection()) return null
-        return ConnectionAccount("LANraragi ${api.serverInfo().version}")
-    }
+    override suspend fun getAccount(): ConnectionAccount? = null
     override fun availableContentScopes() = setOf(LibraryContentScope.COMIC)
     override suspend fun readerContentScope(manga: Manga, chapter: Chapter) = LibraryContentScope.COMIC
     override fun createBrowseScreen(scope: LibraryContentScope, listingQuery: String?, showNavigationUp: Boolean) =
@@ -537,9 +538,26 @@ class LanraragiSource(
             activeApi.serverInfo(true)
             repository.begin(id, generation)
             val untagged = activeApi.untagged()
+            val progressEpoch = readingEpoch.get()
+            val progressPrepared = try {
+                prepareShelfProgressRefresh()
+                true
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                logcat(LogPriority.WARN, error) { "Unable to prepare LANraragi shelf progress refresh" }
+                false
+            }
             var count = 0
             activeApi.streamArchives { entries ->
                 repository.stage(id, generation, entries.map { it.copy(untagged = it.id in untagged) })
+                if (progressPrepared) {
+                    try {
+                        applyShelfProgressEntries(activeApi, progressEpoch, entries)
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        logcat(LogPriority.WARN, error) { "Unable to apply LANraragi shelf progress batch" }
+                    }
+                }
                 count += entries.size
                 status.value = status.value.copy(count = count)
             }
@@ -620,7 +638,7 @@ class LanraragiSource(
         progressMutex.withLock {
             if (closed || ConnectionRestoreState.isRestoring) return
             val previous = repository.readStates(id).firstOrNull { it.archiveId == archiveId(chapterUrl) }
-            if (initialPage && previous?.pending == true) return
+            if (initialPage && shouldSkipInitialLanraragiReading(previous)) return
             if (!acceptsLocalReading(previous, readAt)) return
             val state = LanraragiReadState(
                 archiveId(chapterUrl),
@@ -703,6 +721,7 @@ class LanraragiSource(
         }
         val activeApi = api
         val remote = if (before?.localUnread == true) null else activeApi.archive(archiveId)
+        var conflict = false
         val state = progressMutex.withLock {
             if (ConnectionRestoreState.isRestoring || closed || epoch != readingEpoch.get() ||
                 api !== activeApi
@@ -713,7 +732,12 @@ class LanraragiSource(
             when {
                 local != before -> local ?: return null
                 local?.localUnread == true -> local
+                remote != null && koharia.lanraragi.hasLanraragiProgressConflict(local, remote) -> {
+                    conflict = true
+                    remote.readState()
+                }
                 local?.pending == true && remote != null && shouldKeepLanraragiReading(local, remote) -> local
+                local != null && remote != null && local.readAt > remote.lastRead -> local
                 remote != null -> remote.readState().also {
                     repository.record(id, it)
                     applyState(it)
@@ -727,7 +751,53 @@ class LanraragiSource(
             readDate = Instant.ofEpochMilli(state.readAt).toString(), isEpub = false, canOpenAsPages = false,
             updatedChapterMemo = ConnectionChapterMetadata.withPagesCount(chapterMemo, state.totalPages),
             previousPublicationVersion = null, publicationVersion = null,
+            requiresConfirmation = conflict,
         )
+    }
+
+    override suspend fun acceptRemotePageProgress(chapterUrl: String, pageIndex: Int, totalPages: Int, readAt: Long) {
+        progressMutex.withLock {
+            if (closed || ConnectionRestoreState.isRestoring) return
+            val state = LanraragiReadState(archiveId(chapterUrl), pageIndex, totalPages, readAt, pending = false)
+            repository.record(id, state)
+            applyState(state)
+        }
+    }
+
+    /** Refresh reading state independently of the shelf catalogue and without creating history. */
+    suspend fun refreshShelfProgress() {
+        if (closed || ConnectionRestoreState.isRestoring) return
+        if (synchronized(this) { syncJob?.isActive == true }) return
+        val activeApi = api
+        val epoch = readingEpoch.get()
+        prepareShelfProgressRefresh()
+        activeApi.streamArchives { applyShelfProgressEntries(activeApi, epoch, it) }
+        retryPending()
+    }
+
+    private suspend fun prepareShelfProgressRefresh() {
+        progressMutex.withLock { restoreUnreadOverrides() }
+    }
+
+    private suspend fun applyShelfProgressEntries(
+        activeApi: LanraragiApi,
+        epoch: Long,
+        entries: List<LanraragiEntry>,
+    ) {
+        progressMutex.withLock {
+            if (closed || ConnectionRestoreState.isRestoring || api !== activeApi || readingEpoch.get() != epoch) return
+            val local = repository.readStates(id).associateBy { it.archiveId }
+            entries.forEach { remote ->
+                val prior = local[remote.id]
+                if (prior?.pending != true && prior?.localUnread != true &&
+                    remote.lastRead > (prior?.readAt ?: 0L)
+                ) {
+                    val state = remote.readState()
+                    repository.record(id, state)
+                    applyState(state)
+                }
+            }
+        }
     }
 
     override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {

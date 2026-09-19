@@ -261,7 +261,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
         view.minScale = base
         view.maxScale = base * 5f
         view.setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_OUTSIDE)
-        val scale = bounds.height() / view.sHeight
+        // The spread layout uses integer page widths while SSIV derives width from the source
+        // aspect ratio. Cover both assigned dimensions so their subpixel rounding cannot leave a
+        // strip of the reader background visible at the shared edge while zooming.
+        val scale = maxOf(
+            bounds.height() / view.sHeight,
+            bounds.width() / view.sWidth,
+        )
         view.setScaleAndCenter(
             scale,
             PointF((width / 2f - bounds.left) / scale, (height / 2f - bounds.top) / scale),

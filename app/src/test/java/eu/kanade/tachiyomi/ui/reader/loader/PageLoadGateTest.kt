@@ -33,10 +33,10 @@ class PageLoadGateTest {
         assertEquals(emptyList<Int>(), gate.activate(2, 20).prefetchIndexes)
         assertEquals(listOf(3), gate.onPageDisplayed(2, 20))
 
-        val selection = gate.activate(5, 20)
+        val selection = gate.activate(3, 20)
 
         assertTrue(selection.changed)
-        assertEquals(listOf(6), selection.prefetchIndexes)
+        assertEquals(listOf(4), selection.prefetchIndexes)
     }
 
     @Test
@@ -47,7 +47,29 @@ class PageLoadGateTest {
         val selection = gate.activate(8, 10)
 
         assertEquals(emptyList<Int>(), gate.onPageDisplayed(2, 10))
-        assertEquals(listOf(9), selection.prefetchIndexes)
+        assertEquals(emptyList<Int>(), selection.prefetchIndexes)
+        assertEquals(listOf(9), gate.onPageDisplayed(8, 10))
+    }
+
+    @Test
+    fun `provider prefetch count loads two pages after visible page`() {
+        val gate = PageLoadGate(preloadSize = 2, prefetchPageCount = 2)
+
+        gate.activate(7, 20)
+
+        assertEquals(listOf(8, 9), gate.onPageDisplayed(7, 20))
+    }
+
+    @Test
+    fun `large jump relocks provider prefetch until target is displayed`() {
+        val gate = PageLoadGate(preloadSize = 2, prefetchPageCount = 2)
+        gate.activate(7, 20)
+        gate.onPageDisplayed(7, 20)
+
+        val activation = gate.activate(2, 20)
+
+        assertEquals(emptyList<Int>(), activation.prefetchIndexes)
+        assertEquals(listOf(1, 0), gate.onPageDisplayed(2, 20))
     }
 
     @Test
@@ -65,8 +87,8 @@ class PageLoadGateTest {
     @Test
     fun `backward prefetch clamps at chapter start`() {
         val gate = PageLoadGate(preloadSize = 4)
-        gate.activate(5, 20)
-        gate.onPageDisplayed(5, 20)
+        gate.activate(2, 20)
+        gate.onPageDisplayed(2, 20)
 
         val selection = gate.activate(1, 20)
 

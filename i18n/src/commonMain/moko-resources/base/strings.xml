@@ -250,6 +250,8 @@
     <string name="pref_komga_server_summary">Configure the connected Komga server address and authentication</string>
     <string name="pref_connection_settings">Connection settings</string>
     <string name="action_add_server">Add server</string>
+    <string name="action_add_komga_server">Add Komga server</string>
+    <string name="action_add_lanraragi">Add LANraragi</string>
     <string name="action_use_local_folder">Use local folder</string>
     <string name="delete_server">Delete server</string>
     <string name="delete_server_confirmation">Do you wish to delete the server "%s"?</string>

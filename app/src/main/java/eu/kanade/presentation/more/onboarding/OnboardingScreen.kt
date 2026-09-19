@@ -28,6 +28,7 @@ import tachiyomi.presentation.core.screens.InfoScreen
 fun OnboardingScreen(
     onComplete: () -> Unit,
     onAddServer: () -> Unit,
+    onAddLanraragi: () -> Unit,
     onAddLocalFolder: () -> Unit,
     onRestoreBackup: () -> Unit,
 ) {
@@ -41,6 +42,7 @@ fun OnboardingScreen(
             PermissionStep(),
             GuidesStep(
                 onAddServer = onAddServer,
+                onAddLanraragi = onAddLanraragi,
                 onAddLocalFolder = onAddLocalFolder,
                 onRestoreBackup = onRestoreBackup,
             ),
