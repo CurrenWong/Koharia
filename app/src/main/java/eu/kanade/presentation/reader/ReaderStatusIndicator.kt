@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.text.format.DateFormat
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -48,6 +47,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderStatusPosition
 import kotlinx.coroutines.delay
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 import java.util.Date
 
 internal data class ReaderBatteryState(val percent: Int, val charging: Boolean)
@@ -183,7 +183,7 @@ fun ReaderBufferingIndicator(
         }
     }
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AnimatedVisibility(
+        EInkAnimatedVisibility(
             visible = visible,
             modifier = Modifier.offset(y = 40.dp),
             enter = fadeIn(),
