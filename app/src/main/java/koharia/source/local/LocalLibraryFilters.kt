@@ -4,8 +4,10 @@ import androidx.compose.runtime.Immutable
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import koharia.connection.LibraryContentScope
+import kotlinx.serialization.Serializable
 
 @Immutable
+@Serializable
 data class LocalLibraryFilters(
     val series: String = "",
     val chapter: String = "",
@@ -13,6 +15,8 @@ data class LocalLibraryFilters(
     val artist: String = "",
     val genre: String = "",
     val format: String = "",
+    val sort: Int = 0,
+    val descending: Boolean = false,
 ) {
     val isActive: Boolean
         get() = series.isNotBlank() ||
@@ -20,7 +24,9 @@ data class LocalLibraryFilters(
             author.isNotBlank() ||
             artist.isNotBlank() ||
             genre.isNotBlank() ||
-            format.isNotBlank()
+            format.isNotBlank() ||
+            sort != 0 ||
+            descending
 
     fun toFilterList(scope: LibraryContentScope, bookshelfId: String? = null): FilterList = FilterList(
         LocalLibraryScopeFilter(scope),

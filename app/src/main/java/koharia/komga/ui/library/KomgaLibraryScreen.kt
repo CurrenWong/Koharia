@@ -1,5 +1,6 @@
 package koharia.komga.ui.library
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -30,10 +31,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
@@ -56,6 +61,7 @@ import eu.kanade.presentation.browse.MissingSourceScreen
 import eu.kanade.presentation.more.settings.screen.KomgaLibraryClassificationScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.CatalogueSource
@@ -64,17 +70,22 @@ import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionPreferences
+import koharia.connection.EntryOpenMode
+import koharia.connection.EntryOpenPreferences
+import koharia.connection.SharedAppPreferences
 import koharia.connection.ui.LibraryConnectionSetupPrompt
+import koharia.epub.EpubReaderLauncher
 import koharia.epub.cache.EpubCacheManager
 import koharia.komga.ui.library.components.KomgaLibraryToolbar
+import koharia.lanraragi.ui.LanraragiArchivePreviewScreen
 import koharia.source.komga.KomgaLibraryClassificationManager
 import koharia.source.komga.KomgaLibraryScope
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaServerSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import tachiyomi.core.common.DocumentationUrls
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -130,8 +141,8 @@ data class KomgaLibraryScreen(
 
         val sourceManager: SourceManager = Injekt.get()
         val sourcePreferences: SourcePreferences = Injekt.get()
-        val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get()
-        val basePreferences = remember(sourceId) { scopedPreferenceStoreFactory.basePreferences(sourceId) }
+        val sharedAppPreferences: SharedAppPreferences = Injekt.get()
+        val basePreferences = remember(sourceId) { sharedAppPreferences.basePreferences() }
         val libraryPreferences: LibraryPreferences = Injekt.get()
         val showLibraryReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
         val connectionPreferences: ConnectionPreferences = Injekt.get()
@@ -168,7 +179,13 @@ data class KomgaLibraryScreen(
         val state by screenModel.state.collectAsState()
         val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
         val lifecycleOwner = LocalLifecycleOwner.current
-        val columns by libraryPreferences.portraitColumns.collectAsState()
+        val configuration = LocalConfiguration.current
+        val columnsPreference = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            libraryPreferences.landscapeColumns
+        } else {
+            libraryPreferences.portraitColumns
+        }
+        val columns by columnsPreference.collectAsState()
         val connectionProfiles by remember(connectionPreferences) {
             connectionPreferences.profilesChanges()
         }.collectAsState(initial = connectionPreferences.getProfiles())
@@ -209,6 +226,10 @@ data class KomgaLibraryScreen(
         val uriHandler = LocalUriHandler.current
         val context = LocalContext.current
         val snackbarHostState = remember { SnackbarHostState() }
+        val scope = rememberCoroutineScope()
+        val entryOpenPreferences = remember { Injekt.get<EntryOpenPreferences>() }
+        val readerLauncher = remember { EpubReaderLauncher() }
+        var openingBook by remember { mutableStateOf(false) }
         val mangaList = screenModel.mangaPagerFlow.collectAsLazyPagingItems()
         LaunchedEffect(mangaList.loadState.refresh, mangaList.itemCount, state.isServerConfigured) {
             if (state.isServerConfigured && mangaList.itemCount == 0 &&
@@ -365,14 +386,34 @@ data class KomgaLibraryScreen(
                         onWebViewClick = onWebViewClick,
                         onHelpClick = onHelpClick,
                         onMangaClick = {
-                            navigator.push(
-                                MangaScreen(
-                                    mangaId = it.id,
-                                    fromSource = true,
-                                    sourceId = it.source,
-                                    mangaUrl = it.url,
-                                ),
-                            )
+                            val mode = if (it.url.contains("/api/v1/books/")) {
+                                entryOpenPreferences.komgaMode()
+                            } else {
+                                EntryOpenMode.DETAILS
+                            }
+                            if (mode == EntryOpenMode.DETAILS) {
+                                navigator.push(MangaScreen(it.id, true, it.source, it.url))
+                            } else if (!openingBook) {
+                                openingBook = true
+                                scope.launch {
+                                    runCatching { screenModel.prepareSingleBook(it) }
+                                        .onSuccess { (manga, chapter) ->
+                                            if (mode == EntryOpenMode.PAGE_PREVIEW) {
+                                                navigator.push(LanraragiArchivePreviewScreen(manga.id, manga.source))
+                                            } else {
+                                                context.startActivity(
+                                                    readerLauncher.resolveIntent(context, manga.id, chapter.id),
+                                                )
+                                            }
+                                        }
+                                        .onFailure { error ->
+                                            snackbarHostState.showSnackbar(
+                                                error.localizedMessage ?: context.getString(R.string.unknown_error),
+                                            )
+                                        }
+                                    openingBook = false
+                                }
+                            }
                         },
                         onMangaLongClick = {},
                         modifier = Modifier.offset { IntOffset(x = 0, y = pullOffsetPx.roundToInt()) },

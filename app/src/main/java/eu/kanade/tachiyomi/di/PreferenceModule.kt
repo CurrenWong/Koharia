@@ -8,11 +8,13 @@ import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
+import eu.kanade.tachiyomi.data.updater.UpdatePreferences
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
 import koharia.connection.ConnectionPreferences
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.EntryOpenPreferences
+import koharia.connection.SharedAppPreferences
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.source.komga.KomgaLibraryClassificationManager
@@ -40,35 +42,31 @@ class PreferenceModule(val app: Application) : InjektModule {
             AndroidPreferenceStore(app)
         }
         addSingletonFactory {
-            KomgaLocalConfigManager(
-                preferenceStore = get<PreferenceStore>(),
-                connectionPreferences = get<ConnectionPreferences>(),
-                scopedPreferenceKeys = KomgaLocalConfigManager.buildScopedPreferenceKeys(
-                    app = app,
-                    verboseLoggingDefault = isDebugBuildType,
+            koharia.connection.SharedConfigMigration(
+                storage = koharia.connection.AndroidSharedConfigStorage(
+                    androidx.preference.PreferenceManager.getDefaultSharedPreferences(app),
                 ),
-            )
-        }
-        addSingletonFactory {
-            ScopedPreferenceStore(
-                preferenceStore = get<PreferenceStore>(),
-                scopeProvider = get<KomgaLocalConfigManager>(),
-            )
-        }
-        addSingletonFactory {
-            KomgaLibraryClassificationManager(
-                preferenceStore = get<PreferenceStore>(),
-                serverPreferences = get<KomgaServerPreferences>(),
-                localConfigManager = get<KomgaLocalConfigManager>(),
+                defaults = koharia.connection.ConnectionConfigManager.buildPreferenceDefaults(app, isDebugBuildType),
+                profiles = { get<ConnectionPreferences>().getProfiles() },
                 json = get(),
             )
         }
         addSingletonFactory {
-            ConnectionScopedPreferenceStoreFactory(
-                app = app,
+            KomgaLocalConfigManager(
                 preferenceStore = get<PreferenceStore>(),
-                connectionPreferences = get<ConnectionPreferences>(),
             )
+        }
+        addSingletonFactory {
+            get<SharedAppPreferences>().store()
+        }
+        addSingletonFactory {
+            KomgaLibraryClassificationManager(
+                preferenceStore = get<PreferenceStore>(),
+                json = get(),
+            )
+        }
+        addSingletonFactory {
+            SharedAppPreferences(app, get<PreferenceStore>())
         }
         addSingletonFactory {
             KomgaServerRemovalManager(
@@ -138,6 +136,12 @@ class PreferenceModule(val app: Application) : InjektModule {
         }
         addSingletonFactory {
             BasePreferences(app, get<ScopedPreferenceStore>())
+        }
+        addSingletonFactory {
+            UpdatePreferences(get<PreferenceStore>())
+        }
+        addSingletonFactory {
+            EntryOpenPreferences(get<PreferenceStore>())
         }
     }
 }

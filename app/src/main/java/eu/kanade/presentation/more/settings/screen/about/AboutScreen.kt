@@ -24,11 +24,14 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.more.LogoHeader
+import eu.kanade.presentation.more.settings.widget.PreferenceGroupHeader
+import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
+import eu.kanade.tachiyomi.data.updater.UpdatePreferences
 import eu.kanade.tachiyomi.ui.more.NewUpdateScreen
 import eu.kanade.tachiyomi.util.CrashLogUtil
 import eu.kanade.tachiyomi.util.lang.toDateTimestampString
@@ -53,6 +56,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.icons.CustomIcons
 import tachiyomi.presentation.core.icons.Github
 import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.Instant
@@ -69,6 +73,9 @@ object AboutScreen : Screen() {
         val handleBack = LocalBackPress.current
         val navigator = LocalNavigator.currentOrThrow
         var isCheckingUpdates by remember { mutableStateOf(false) }
+        val updatePreferences = remember { Injekt.get<UpdatePreferences>() }
+        val autoCheckUpdates by updatePreferences.autoCheckUpdates.collectAsState()
+        val showUpdateReminders by updatePreferences.showUpdateReminders.collectAsState()
 
         Scaffold(
             topBar = { scrollBehavior ->
@@ -100,6 +107,23 @@ object AboutScreen : Screen() {
                 }
 
                 if (updaterEnabled) {
+                    item {
+                        PreferenceGroupHeader(title = stringResource(MR.strings.channel_app_updates))
+                    }
+                    item {
+                        SwitchPreferenceWidget(
+                            title = stringResource(MR.strings.pref_auto_check_app_updates),
+                            checked = autoCheckUpdates,
+                            onCheckedChanged = updatePreferences.autoCheckUpdates::set,
+                        )
+                    }
+                    item {
+                        SwitchPreferenceWidget(
+                            title = stringResource(MR.strings.pref_show_update_reminders),
+                            checked = showUpdateReminders,
+                            onCheckedChanged = updatePreferences.showUpdateReminders::set,
+                        )
+                    }
                     item {
                         TextPreferenceWidget(
                             title = stringResource(MR.strings.check_for_updates),
@@ -154,6 +178,9 @@ object AboutScreen : Screen() {
                 }
 
                 item {
+                    PreferenceGroupHeader(title = stringResource(MR.strings.pref_project_information))
+                }
+                item {
                     TextPreferenceWidget(
                         title = stringResource(MR.strings.licenses),
                         onPreferenceClick = { navigator.push(OpenSourceLicensesScreen()) },
@@ -201,7 +228,7 @@ object AboutScreen : Screen() {
         val updateChecker = AppUpdateChecker()
         withUIContext {
             try {
-                when (val result = withIOContext { updateChecker.checkForUpdate(context, forceCheck = true) }) {
+                when (val result = withIOContext { updateChecker.checkForUpdate(forceCheck = true) }) {
                     is GetApplicationRelease.Result.NewUpdate -> {
                         onResult(result.release, true)
                     }

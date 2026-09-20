@@ -23,7 +23,10 @@ class PreferenceBackupCreator(
 ) {
 
     fun createApp(includePrivatePreferences: Boolean): List<BackupPreference> {
-        return preferenceStore.getAll().toBackupPreferences()
+        val all = preferenceStore.getAll()
+        return all.toBackupPreferences()
+            .filterNot { koharia.connection.SharedConfigMigration.isRetiredKey(it.key) }
+            .filterNot { !it.key.contains("::") && "connection_shared::${it.key}" in all }
             .withPrivatePreferences(includePrivatePreferences)
     }
 

@@ -14,7 +14,7 @@ class KomgaCacheControlInterceptor(
         val request = chain.request()
         val response = chain.proceed(request)
 
-        if (!response.isSuccessful) {
+        if (!response.isSuccessful || request.isKomgaProgressSync) {
             return response
         }
 

@@ -1,18 +1,24 @@
 package koharia.lanraragi.ui
 
 import coil3.ImageLoader
+import coil3.asImage
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
+import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
+import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
+import eu.kanade.tachiyomi.ui.reader.loader.LocalPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import koharia.connection.ConnectionLocalFileAdapter
+import koharia.connection.ConnectionSource
 import koharia.lanraragi.LanraragiTimedBody
-import koharia.source.lanraragi.LanraragiSource
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
@@ -40,23 +46,24 @@ internal class LanraragiPreviewImageFetcher(
     private val data: LanraragiPreviewImage,
     private val options: Options,
     private val permits: Semaphore,
+    private val sourceManager: SourceManager = Injekt.get(),
 ) : Fetcher {
-    override suspend fun fetch(): SourceFetchResult {
+    override suspend fun fetch(): FetchResult {
         permits.acquire()
-        var loader: DownloadPageLoader? = null
+        var recycleLoader: (() -> Unit)? = null
         var opened: Source? = null
         val released = AtomicBoolean()
         fun release() {
             if (released.compareAndSet(false, true)) {
                 try {
-                    loader?.recycle()
+                    recycleLoader?.invoke()
                 } finally {
                     permits.release()
                 }
             }
         }
         try {
-            val source = Injekt.get<SourceManager>().get(data.manga.source) as? LanraragiSource
+            val source = sourceManager.get(data.manga.source) as? ConnectionSource
                 ?: error("Connection unavailable")
             val downloads = Injekt.get<DownloadManager>()
             val chapter = data.chapter
@@ -70,15 +77,32 @@ internal class LanraragiPreviewImageFetcher(
             )
             opened = if (downloaded) {
                 val local = DownloadPageLoader(ReaderChapter(chapter), data.manga, source, downloads, Injekt.get())
-                loader = local
+                recycleLoader = local::recycle
                 val page = local.getPages()[data.page.index]
+                checkNotNull(page.stream).invoke().source()
+            } else if (source is ConnectionLocalFileAdapter) {
+                val local = LocalPageLoader(ReaderChapter(chapter), source, source)
+                recycleLoader = local::recycle
+                val page = local.getPages()[data.page.index]
+                page.bitmap?.let { bitmapProvider ->
+                    val bitmap = bitmapProvider()
+                    try {
+                        currentCoroutineContext().ensureActive()
+                        release()
+                        return ImageFetchResult(bitmap.asImage(), false, DataSource.DISK)
+                    } catch (error: Throwable) {
+                        bitmap.recycle()
+                        throw error
+                    }
+                }
                 checkNotNull(page.stream).invoke().source()
             } else {
                 val cache = Injekt.get<ChapterCache>()
                 val url = checkNotNull(data.page.imageUrl)
                 if (!cache.isImageInCache(url)) {
+                    val httpSource = source as? HttpSource ?: error("Page preview is unsupported")
                     val fetchContext = currentCoroutineContext()
-                    source.getImage(data.page).use { response ->
+                    httpSource.getImage(data.page).use { response ->
                         val body = LanraragiTimedBody(response.body, { fetchContext.ensureActive() }) { _, _ -> }
                         cache.putImageToCache(url, response.newBuilder().body(body).build())
                     }

@@ -2,7 +2,7 @@ package koharia.lanraragi
 
 import koharia.domain.lanraragi.LanraragiEntry
 
-enum class LanraragiArchiveOpenMode { READER, PAGE_PREVIEW }
+enum class LanraragiArchiveOpenMode { READER, PAGE_PREVIEW, DETAILS }
 
 enum class LanraragiEntryDestination { READER, PAGE_PREVIEW, DETAILS }
 
@@ -14,9 +14,10 @@ fun lanraragiEntryDestination(
 ): LanraragiEntryDestination {
     val archivePrefix = "/lanraragi/$sourceId/${LanraragiEntry.Kind.ARCHIVE.name.lowercase()}/"
     if (!url.startsWith(archivePrefix)) return LanraragiEntryDestination.DETAILS
-    return if (longClick || mode == LanraragiArchiveOpenMode.PAGE_PREVIEW) {
-        LanraragiEntryDestination.PAGE_PREVIEW
-    } else {
-        LanraragiEntryDestination.READER
+    if (longClick) return LanraragiEntryDestination.PAGE_PREVIEW
+    return when (mode) {
+        LanraragiArchiveOpenMode.READER -> LanraragiEntryDestination.READER
+        LanraragiArchiveOpenMode.PAGE_PREVIEW -> LanraragiEntryDestination.PAGE_PREVIEW
+        LanraragiArchiveOpenMode.DETAILS -> LanraragiEntryDestination.DETAILS
     }
 }

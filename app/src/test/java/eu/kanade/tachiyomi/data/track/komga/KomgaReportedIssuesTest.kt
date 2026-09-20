@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.track.komga
 import io.mockk.every
 import io.mockk.mockk
 import koharia.source.komga.KomgaSource
+import koharia.source.komga.isKomgaProgressSync
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
@@ -12,11 +13,36 @@ import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.source.service.SourceManager
 
 class KomgaReportedIssuesTest {
+    @Test
+    fun `restored initial page never queues but explicit first page and navigation do`() = runBlocking {
+        val source = mockk<KomgaSource>()
+        every { source.id } returns 1L
+        io.mockk.coEvery { source.recordLocalPageProgress(any(), any(), any(), any(), any()) } coAnswers
+            { callOriginal() }
+        io.mockk.mockkObject(KomgaPageProgressRetryJob.Companion)
+        try {
+            every { KomgaPageProgressRetryJob.enqueueLocal(any(), any(), any(), any(), any()) } returns
+                java.util.UUID.randomUUID()
+            val url = "https://komga.test/api/v1/books/book"
+            source.recordLocalPageProgress(url, 2, 10, 100L, initialPage = true)
+            source.recordLocalPageProgress(url, 2, 10, 200L, initialPage = true)
+            io.mockk.verify(exactly = 0) { KomgaPageProgressRetryJob.enqueueLocal(any(), any(), any(), any(), any()) }
+            source.recordLocalPageProgress(url, 0, 10, 300L, initialPage = false)
+            source.recordLocalPageProgress(url, 3, 10, 400L, initialPage = false)
+            io.mockk.verify(exactly = 1) { KomgaPageProgressRetryJob.enqueueLocal(1L, url, 0, 10, 300L) }
+            io.mockk.verify(exactly = 1) { KomgaPageProgressRetryJob.enqueueLocal(1L, url, 3, 10, 400L) }
+        } finally {
+            io.mockk.unmockkObject(KomgaPageProgressRetryJob.Companion)
+        }
+    }
+
     @Test
     fun `shelf completed progress requests the entire catalogue`() = runBlocking {
         val requests = mutableListOf<okhttp3.Request>()
@@ -30,6 +56,7 @@ class KomgaReportedIssuesTest {
         api.getInProgressBookProgress(1, includeCompleted = true)
         api.getInProgressBookProgress(1, includeCompleted = true)
         assertEquals(1, requests.size)
+        assertTrue(requests.single().isKomgaProgressSync)
         assertEquals("true", requests.single().url.queryParameter("unpaged"))
         assertNull(requests.single().url.queryParameter("read_status"))
         api.getInProgressBookProgress(1, includeCompleted = true, forceRefresh = true)
@@ -66,6 +93,40 @@ class KomgaReportedIssuesTest {
         )
         org.junit.jupiter.api.Assertions.assertFalse(
             canRetryKomgaPageProgress(baseline.copy(completed = true), 2, false, baseline.readDate),
+        )
+    }
+
+    @Test
+    fun `pending local progress uploads only when it is not older than remote`() {
+        assertTrue(
+            shouldUploadPendingKomgaPageProgress(
+                remotePage = 1,
+                remoteCompleted = false,
+                targetPage = 4,
+                targetCompleted = false,
+                remoteReadAt = 100L,
+                localReadAt = 200L,
+            ),
+        )
+        assertFalse(
+            shouldUploadPendingKomgaPageProgress(
+                remotePage = 5,
+                remoteCompleted = false,
+                targetPage = 4,
+                targetCompleted = false,
+                remoteReadAt = 300L,
+                localReadAt = 200L,
+            ),
+        )
+        assertFalse(
+            shouldUploadPendingKomgaPageProgress(
+                remotePage = 4,
+                remoteCompleted = false,
+                targetPage = 4,
+                targetCompleted = false,
+                remoteReadAt = 100L,
+                localReadAt = 200L,
+            ),
         )
     }
 

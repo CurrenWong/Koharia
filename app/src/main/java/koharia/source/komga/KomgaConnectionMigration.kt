@@ -75,6 +75,7 @@ class KomgaConnectionMigration(
     }
 
     private fun migrateConfigMode(forceLegacyInventory: Boolean) {
+        if (preferenceStore.getBoolean(koharia.connection.SharedConfigMigration.COMPLETED).get()) return
         if (connectionPreferences.hasPersistedConfigMode() && !forceLegacyInventory) return
         val legacyMode = preferenceStore.getString(PREF_LEGACY_LOCAL_CONFIG_MODE)
         if (legacyMode.isSet()) {

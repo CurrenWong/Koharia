@@ -65,7 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import eu.kanade.presentation.components.AdaptiveSheet
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.epub.font.EpubFontFaceDescriptor
 import koharia.epub.font.EpubFontFamilyDescriptor
 import koharia.epub.font.EpubFontId
@@ -165,7 +165,7 @@ private fun EpubFontPickerContent(
     showTitle: Boolean,
     onFontSelected: (EpubFontId) -> Unit,
 ) {
-    val scopedPreferenceStoreFactory = remember { Injekt.get<ConnectionScopedPreferenceStoreFactory>() }
+    val sharedAppPreferences = remember { Injekt.get<SharedAppPreferences>() }
     val catalog by manager.catalogState.collectAsState()
     val rawSelectedId by preferences.selectedFontId.changes().collectAsState(preferences.selectedFontId.get())
     val selectedId = EpubFontId.fromPreference(rawSelectedId)
@@ -400,7 +400,7 @@ private fun EpubFontPickerContent(
                     deleteCandidate = null
                     scope.launch {
                         if (manager.deleteFamily(family.id)) {
-                            scopedPreferenceStoreFactory.resetEpubFontSelection(family.id)
+                            sharedAppPreferences.resetEpubFontSelection(family.id)
                         } else {
                             importMessage = deleteFailed
                         }

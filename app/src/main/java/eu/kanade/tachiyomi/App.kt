@@ -109,7 +109,20 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         val appModule = AppModule(this)
         Injekt.importModule(appModule)
         Injekt.importModule(DomainModule())
-        appModule.initializeInBackground()
+        Injekt.get<koharia.connection.SharedConfigMigration>().captureUpgradeSelection()
+        Injekt.get<koharia.source.komga.KomgaConnectionMigration>().migrate()
+        setupNotificationChannels()
+        if (Injekt.get<koharia.connection.SharedConfigMigration>().initialize()) {
+            initializeSharedConfiguration()
+        }
+    }
+
+    private var sharedConfigurationInitialized = false
+
+    fun initializeSharedConfiguration() {
+        if (sharedConfigurationInitialized) return
+        sharedConfigurationInitialized = true
+        AppModule(this).initializeInBackground()
 
         setupNotificationChannels()
 
@@ -182,8 +195,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         uiPreferences.themeMode.changes()
             .onEach { themeMode ->
                 logcat(LogPriority.DEBUG) {
-                    "Applying scoped theme mode: themeMode=$themeMode, " +
-                        "localConfigMode=${connectionPreferences.configMode.get()}, " +
+                    "Applying theme mode: themeMode=$themeMode, " +
+
                         "activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
                         "scope=${localConfigManager.currentScope().prefix}"
                 }
@@ -194,8 +207,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         uiPreferences.appTheme.changes()
             .onEach { appTheme ->
                 logcat(LogPriority.DEBUG) {
-                    "Scoped app theme changed: appTheme=$appTheme, " +
-                        "localConfigMode=${connectionPreferences.configMode.get()}, " +
+                    "App theme changed: appTheme=$appTheme, " +
+
                         "activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
                         "scope=${localConfigManager.currentScope().prefix}"
                 }
@@ -205,8 +218,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         uiPreferences.themeDarkAmoled.changes()
             .onEach { isAmoled ->
                 logcat(LogPriority.DEBUG) {
-                    "Scoped AMOLED preference changed: isAmoled=$isAmoled, " +
-                        "localConfigMode=${connectionPreferences.configMode.get()}, " +
+                    "AMOLED preference changed: isAmoled=$isAmoled, " +
+
                         "activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
                         "scope=${localConfigManager.currentScope().prefix}"
                 }

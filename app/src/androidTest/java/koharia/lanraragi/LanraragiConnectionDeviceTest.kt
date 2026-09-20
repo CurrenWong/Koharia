@@ -143,8 +143,8 @@ class LanraragiConnectionDeviceTest {
             Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
             val chapter = chapters.getChapterByMangaId(manga.id).single()
             source.api.pushProgress(entry.id, 2)
-            Injekt.get<koharia.connection.ConnectionScopedPreferenceStoreFactory>()
-                .readerPreferences(source.id)
+            Injekt.get<koharia.connection.SharedAppPreferences>()
+                .readerPreferences()
                 .apply {
                     showNavigationOverlayNewUser.set(false)
                     showNavigationOverlayOnStart.set(false)
@@ -179,8 +179,8 @@ class LanraragiConnectionDeviceTest {
             Injekt.get<SyncChaptersWithSource>().await(source.getChapterList(manga.toSManga()), manga, source)
             val chapter = chapters.getChapterByMangaId(manga.id).single()
             assertTrue(source.api.archive(entry.id).isNew)
-            Injekt.get<koharia.connection.ConnectionScopedPreferenceStoreFactory>()
-                .readerPreferences(source.id)
+            Injekt.get<koharia.connection.SharedAppPreferences>()
+                .readerPreferences()
                 .apply {
                     showNavigationOverlayNewUser.set(false)
                     showNavigationOverlayOnStart.set(false)

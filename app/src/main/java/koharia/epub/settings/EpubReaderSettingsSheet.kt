@@ -580,6 +580,145 @@ fun EpubThemePreference(
 }
 
 @Composable
+fun ComicThemePreference(readerPreferences: ReaderPreferences) {
+    val currentTheme by readerPreferences.readerTheme.changes()
+        .collectAsState(readerPreferences.readerTheme.get())
+    val currentCustomColor by readerPreferences.readerCustomBackgroundColor.changes()
+        .collectAsState(readerPreferences.readerCustomBackgroundColor.get())
+    val backgroundColors = rememberComicBackgroundColors(readerPreferences)
+    val deleteColorLabel = stringResource(MR.strings.epub_reader_delete_custom_color)
+    val automaticColor = MaterialTheme.colorScheme.background.toArgb()
+    var showColorPicker by rememberSaveable { mutableStateOf(false) }
+
+    fun saveBackgroundColors(colors: List<Int>) {
+        readerPreferences.readerBackgroundColors.set(EpubLayoutPreferences.encodeBackgroundColors(colors))
+    }
+
+    fun selectColor(color: Int) {
+        readerPreferences.readerCustomBackgroundColor.set(color)
+        readerPreferences.readerTheme.set(ReaderPreferences.CUSTOM_BACKGROUND_THEME)
+    }
+
+    val selectedColor = when (currentTheme) {
+        0 -> AndroidColor.WHITE
+        1 -> AndroidColor.BLACK
+        2 -> ReaderPreferences.LEGACY_GRAY_BACKGROUND_COLOR
+        3 -> automaticColor
+        else -> currentCustomColor
+    }
+
+    fun deleteBackgroundColor(index: Int) {
+        val color = backgroundColors[index]
+        val remainingColors = backgroundColors.toMutableList().apply { removeAt(index) }
+        saveBackgroundColors(remainingColors)
+        if (selectedColor == color) {
+            remainingColors.getOrNull(index.coerceAtMost(remainingColors.lastIndex))?.let(::selectColor)
+                ?: selectColor(AndroidColor.WHITE)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+    ) {
+        Text(
+            text = stringResource(MR.strings.pref_reader_theme),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            backgroundColors.forEachIndexed { index, color ->
+                key(color) {
+                    ThemeSwatch(
+                        color = Color(color),
+                        label = "#%06X".format(color and 0xFFFFFF),
+                        selected = selectedColor == color,
+                        onClick = { selectColor(color) },
+                        onLongClickLabel = deleteColorLabel,
+                        onLongClick = { deleteBackgroundColor(index) },
+                    )
+                }
+            }
+
+            val canAddColor = backgroundColors.size < EpubLayoutPreferences.MAX_BACKGROUND_COLORS
+            val addColorLabel = stringResource(MR.strings.epub_reader_add_background_color)
+            val colorLimitLabel = stringResource(MR.strings.epub_reader_custom_color_limit)
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .semantics {
+                        contentDescription = if (canAddColor) addColorLabel else colorLimitLabel
+                        role = Role.Button
+                    }
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    .clickable(enabled = canAddColor, role = Role.Button) { showColorPicker = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Add,
+                    contentDescription = null,
+                    tint = if (canAddColor) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    },
+                )
+            }
+        }
+    }
+
+    if (showColorPicker) {
+        CustomBackgroundColorDialog(
+            initialColor = currentCustomColor,
+            readerPreferences = readerPreferences,
+            onDismissRequest = { showColorPicker = false },
+            onConfirm = { color ->
+                saveBackgroundColors(
+                    (backgroundColors + color)
+                        .distinct()
+                        .take(EpubLayoutPreferences.MAX_BACKGROUND_COLORS),
+                )
+                selectColor(color)
+                showColorPicker = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun rememberComicBackgroundColors(readerPreferences: ReaderPreferences): List<Int> {
+    val serializedColors by readerPreferences.readerBackgroundColors.changes()
+        .collectAsState(readerPreferences.readerBackgroundColors.get())
+    val needsMigration = !readerPreferences.readerBackgroundColors.isSet()
+    val initialColors = remember {
+        (EpubLayoutPreferences.DEFAULT_BACKGROUND_COLORS + ReaderPreferences.LEGACY_GRAY_BACKGROUND_COLOR)
+            .distinct()
+            .take(EpubLayoutPreferences.MAX_BACKGROUND_COLORS)
+    }
+
+    LaunchedEffect(needsMigration) {
+        if (needsMigration) {
+            readerPreferences.readerBackgroundColors.set(
+                EpubLayoutPreferences.encodeBackgroundColors(initialColors),
+            )
+        }
+    }
+
+    return remember(serializedColors, needsMigration, initialColors) {
+        if (needsMigration) initialColors else EpubLayoutPreferences.decodeBackgroundColors(serializedColors)
+    }
+}
+
+@Composable
 private fun rememberEpubBackgroundColors(preferences: EpubLayoutPreferences): List<Int> {
     val serializedColors by preferences.backgroundColors.changes()
         .collectAsState(preferences.backgroundColors.get())
@@ -789,6 +928,221 @@ fun EpubBackgroundSettingsPreference(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { showManager = false }) {
+                                Text(stringResource(MR.strings.action_ok))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    colorPickerIndex?.let { editIndex ->
+        val initialColor = backgroundColors.getOrNull(editIndex) ?: selectedColor
+        CustomBackgroundColorDialog(
+            initialColor = initialColor,
+            readerPreferences = readerPreferences,
+            followReaderBrightness = false,
+            isEditing = editIndex != ADD_BACKGROUND_COLOR_INDEX,
+            onDismissRequest = { colorPickerIndex = null },
+            onConfirm = { color ->
+                if (editIndex == ADD_BACKGROUND_COLOR_INDEX) {
+                    saveBackgroundColors(backgroundColors + color)
+                    selectColor(color)
+                } else {
+                    val previousColor = backgroundColors[editIndex]
+                    val updatedColors = backgroundColors.toMutableList().apply { set(editIndex, color) }
+                    saveBackgroundColors(updatedColors)
+                    if (selectedColor == previousColor) selectColor(color)
+                }
+                colorPickerIndex = null
+            },
+        )
+    }
+}
+
+@Composable
+fun ComicBackgroundSettingsPreference(readerPreferences: ReaderPreferences) {
+    val currentTheme by readerPreferences.readerTheme.changes()
+        .collectAsState(readerPreferences.readerTheme.get())
+    val currentCustomColor by readerPreferences.readerCustomBackgroundColor.changes()
+        .collectAsState(readerPreferences.readerCustomBackgroundColor.get())
+    val backgroundColors = rememberComicBackgroundColors(readerPreferences)
+    val automaticColor = MaterialTheme.colorScheme.background.toArgb()
+    var showManager by rememberSaveable { mutableStateOf(false) }
+    var colorPickerIndex by rememberSaveable { mutableStateOf<Int?>(null) }
+
+    fun saveBackgroundColors(colors: List<Int>) {
+        readerPreferences.readerBackgroundColors.set(EpubLayoutPreferences.encodeBackgroundColors(colors))
+    }
+
+    fun selectColor(color: Int) {
+        readerPreferences.readerCustomBackgroundColor.set(color)
+        readerPreferences.readerTheme.set(ReaderPreferences.CUSTOM_BACKGROUND_THEME)
+    }
+
+    val selectedColor = when (currentTheme) {
+        0 -> AndroidColor.WHITE
+        1 -> AndroidColor.BLACK
+        2 -> ReaderPreferences.LEGACY_GRAY_BACKGROUND_COLOR
+        3 -> automaticColor
+        else -> currentCustomColor
+    }
+
+    fun deleteColor(index: Int) {
+        val removedColor = backgroundColors[index]
+        val remainingColors = backgroundColors.toMutableList().apply { removeAt(index) }
+        saveBackgroundColors(remainingColors)
+        if (selectedColor == removedColor) {
+            remainingColors.getOrNull(index.coerceAtMost(remainingColors.lastIndex))?.let(::selectColor)
+                ?: selectColor(AndroidColor.WHITE)
+        }
+    }
+
+    fun moveColor(index: Int, offset: Int) {
+        val targetIndex = index + offset
+        if (targetIndex !in backgroundColors.indices) return
+        val reorderedColors = backgroundColors.toMutableList()
+        val color = reorderedColors.removeAt(index)
+        reorderedColors.add(targetIndex, color)
+        saveBackgroundColors(reorderedColors)
+    }
+
+    Surface(onClick = { showManager = true }, color = Color.Transparent) {
+        ListItem(
+            headlineContent = { Text(stringResource(MR.strings.pref_reader_theme)) },
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
+    }
+
+    if (showManager && colorPickerIndex == null) {
+        Dialog(onDismissRequest = { showManager = false }) {
+            EpubDialogBrightnessContainer(
+                followReaderBrightness = false,
+                readerPreferences = readerPreferences,
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    tonalElevation = 6.dp,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 640.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 24.dp),
+                    ) {
+                        Text(
+                            text = stringResource(MR.strings.pref_reader_theme),
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        backgroundColors.forEachIndexed { index, color ->
+                            val selected = selectedColor == color
+                            Surface(
+                                onClick = { selectColor(color) },
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    Color.Transparent
+                                },
+                                shape = MaterialTheme.shapes.large,
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 56.dp)
+                                        .padding(horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .border(
+                                                width = if (selected) 2.dp else 1.dp,
+                                                color = if (selected) {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    MaterialTheme.colorScheme.outlineVariant
+                                                },
+                                                shape = CircleShape,
+                                            )
+                                            .padding(4.dp)
+                                            .background(Color(color), CircleShape),
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "#%06X".format(color and 0xFFFFFF),
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    IconButton(
+                                        onClick = { colorPickerIndex = index },
+                                        modifier = Modifier.size(36.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Edit,
+                                            contentDescription = stringResource(
+                                                MR.strings.epub_reader_edit_background_color,
+                                            ),
+                                        )
+                                    }
+                                    IconButton(
+                                        enabled = index > 0,
+                                        onClick = { moveColor(index, -1) },
+                                        modifier = Modifier.size(36.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.KeyboardArrowUp,
+                                            contentDescription = stringResource(MR.strings.epub_reader_move_color_up),
+                                        )
+                                    }
+                                    IconButton(
+                                        enabled = index < backgroundColors.lastIndex,
+                                        onClick = { moveColor(index, 1) },
+                                        modifier = Modifier.size(36.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.KeyboardArrowDown,
+                                            contentDescription = stringResource(
+                                                MR.strings.epub_reader_move_color_down,
+                                            ),
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { deleteColor(index) },
+                                        modifier = Modifier.size(36.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Delete,
+                                            contentDescription = stringResource(MR.strings.action_delete),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        TextButton(
+                            enabled = backgroundColors.size < EpubLayoutPreferences.MAX_BACKGROUND_COLORS,
+                            onClick = { colorPickerIndex = ADD_BACKGROUND_COLOR_INDEX },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(MR.strings.epub_reader_add_background_color))
+                        }
+                        if (backgroundColors.size >= EpubLayoutPreferences.MAX_BACKGROUND_COLORS) {
+                            Text(
+                                text = stringResource(MR.strings.epub_reader_custom_color_limit),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.align(Alignment.CenterHorizontally),
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                             horizontalArrangement = Arrangement.End,
                         ) {
                             TextButton(onClick = { showManager = false }) {

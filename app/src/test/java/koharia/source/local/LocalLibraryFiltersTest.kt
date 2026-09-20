@@ -19,7 +19,10 @@ class LocalLibraryFiltersTest {
             format = "epub",
         )
 
-        assertEquals(filters, filters.toFilterList(LibraryContentScope.BOOK).localLibraryFilters())
+        assertEquals(
+            filters.copy(sort = 0, descending = false),
+            filters.toFilterList(LibraryContentScope.BOOK).localLibraryFilters(),
+        )
     }
 
     @Test

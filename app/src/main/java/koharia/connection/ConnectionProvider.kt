@@ -67,17 +67,6 @@ interface ConnectionLibrarySettingsAdapter {
     fun connectionLibrarySettings(): List<Preference.PreferenceGroup>
 }
 
-interface ConnectionConfigModeInterceptor {
-    fun warningForConfigMode(mode: ConnectionConfigMode): ConnectionConfigModeWarning?
-
-    fun prepareConfigModeChange(mode: ConnectionConfigMode)
-}
-
-data class ConnectionConfigModeWarning(
-    val title: StringResource,
-    val message: StringResource,
-)
-
 class ConnectionRegistry(providers: Collection<ConnectionProvider>) {
     private val providersById = providers.associateBy(ConnectionProvider::id)
 

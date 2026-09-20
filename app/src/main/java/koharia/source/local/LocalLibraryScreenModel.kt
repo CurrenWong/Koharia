@@ -73,11 +73,23 @@ internal class LocalLibraryScreenModel(
     private val eventChannel = Channel<Event>(Channel.BUFFERED)
     private val readProgressRefreshRequests = Channel<Unit>(Channel.CONFLATED)
     private val localReadProgress = MutableStateFlow<Map<String, MangaReadProgress>>(emptyMap())
+    private val filterPreferences = runCatching { LocalLibraryFilterPreferences(sourceId) }.getOrNull()
 
     val events = eventChannel.receiveAsFlow()
     val readProgressByUrl: StateFlow<Map<String, MangaReadProgress>> = localReadProgress.asStateFlow()
 
     init {
+        filterPreferences?.read().takeIf { filterPreferences?.enabled == true }?.let { saved ->
+            appliedFilters.value = saved.filters
+            selectedBookshelfId.value = saved.bookshelfId
+            mutableState.update {
+                it.copy(
+                    filters = saved.filters,
+                    selectedBookshelfId = saved.bookshelfId,
+                    rememberFilters = true,
+                )
+            }
+        }
         screenModelScope.launchIO {
             for (ignored in readProgressRefreshRequests) {
                 refreshLocalReadProgress()
@@ -260,15 +272,19 @@ internal class LocalLibraryScreenModel(
         mutableState.update { it.copy(dialog = null) }
     }
 
-    fun applyFilters(filters: LocalLibraryFilters) {
+    fun applyFilters(filters: LocalLibraryFilters, rememberFilters: Boolean) {
         appliedFilters.value = filters
-        mutableState.update { it.copy(filters = filters, dialog = null) }
+        filterPreferences?.write(filters, selectedBookshelfId.value, rememberFilters)
+        mutableState.update { it.copy(filters = filters, rememberFilters = rememberFilters, dialog = null) }
     }
 
     fun selectBookshelf(bookshelfId: String?) {
         if (state.value.isBusy) return
         clearSelection()
         selectedBookshelfId.value = bookshelfId
+        if (state.value.rememberFilters) {
+            filterPreferences?.write(appliedFilters.value, bookshelfId, true)
+        }
         mutableState.update { it.copy(selectedBookshelfId = bookshelfId) }
     }
 
@@ -435,6 +451,7 @@ internal class LocalLibraryScreenModel(
         val filters: LocalLibraryFilters = LocalLibraryFilters(),
         val bookshelves: List<ConnectionLibraryShelf> = emptyList(),
         val selectedBookshelfId: String? = null,
+        val rememberFilters: Boolean = false,
         val isRefreshing: Boolean = false,
         val refreshError: Throwable? = null,
         val dialog: Dialog? = null,

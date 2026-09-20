@@ -16,7 +16,9 @@ import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.interactor.UpdateManga
+import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.library.components.MangaReadProgress
@@ -32,6 +34,7 @@ import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionShelfCachePolicy
 import koharia.connection.ConnectionShelfStateStore
 import koharia.connection.ConnectionShelfUpdates
+import koharia.domain.manga.model.toDomainManga
 import koharia.epub.cache.EpubCacheManager
 import koharia.komga.api.dto.KOMGA_LIBRARY_IDS_MEMO_KEY
 import koharia.komga.api.dto.KOMGA_LIBRARY_ID_MEMO_KEY
@@ -97,12 +100,15 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.domain.source.service.SourceManager
+import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.source.model.Filter as SourceModelFilter
 
@@ -637,6 +643,26 @@ class KomgaLibraryScreenModel(
             refreshReadProgress(forceRefresh = true)
             refreshSignal.value += 1
         }
+    }
+
+    suspend fun prepareSingleBook(manga: Manga): Pair<Manga, Chapter> {
+        val komgaSource = source as? KomgaSource ?: error("Komga connection unavailable")
+        val local = if (manga.id > 0L) {
+            manga
+        } else {
+            Injekt.get<NetworkToLocalManga>()(manga.toSManga().toDomainManga(komgaSource.id))
+        }
+        val chapters = Injekt.get<ChapterRepository>()
+        chapters.getChapterByMangaId(local.id).singleOrNull()?.let { return local to it }
+        Injekt.get<SyncChaptersWithSource>().await(
+            komgaSource.getChapterList(local.toSManga()),
+            local,
+            komgaSource,
+        )
+        return local to (
+            chapters.getChapterByMangaId(local.id).singleOrNull()
+                ?: error("Unable to prepare Komga book")
+            )
     }
 
     fun refreshReadProgress(forceRefresh: Boolean = false) {

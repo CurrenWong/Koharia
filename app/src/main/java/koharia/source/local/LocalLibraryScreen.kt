@@ -1,5 +1,6 @@
 package koharia.source.local
 
+import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -67,6 +69,8 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import koharia.connection.ConnectionBrowseScreen
 import koharia.connection.ConnectionPreferences
+import koharia.connection.EntryOpenMode
+import koharia.connection.EntryOpenPreferences
 import koharia.connection.LibraryContentScope
 import koharia.connection.ui.ConnectionLibraryShelfDialog
 import koharia.connection.ui.SeriesMetadataEditScreen
@@ -74,6 +78,7 @@ import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.epub.EpubReaderLauncher
 import koharia.importing.ExternalMediaImportScreen
 import koharia.importing.ImageComicScreen
+import koharia.lanraragi.ui.LanraragiArchivePreviewScreen
 import koharia.media.LocalMediaFormats
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.Channel
@@ -173,11 +178,18 @@ data class LocalLibraryScreen(
         val coverUpdatedMessage = stringResource(MR.strings.cover_updated)
         val showLibraryReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
         val readProgressByUrl by screenModel.readProgressByUrl.collectAsState()
-        val columns by libraryPreferences.portraitColumns.collectAsState()
+        val configuration = LocalConfiguration.current
+        val columnsPreference = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            libraryPreferences.landscapeColumns
+        } else {
+            libraryPreferences.portraitColumns
+        }
+        val columns by columnsPreference.collectAsState()
         val connectionProfiles by connectionPreferences.profilesChanges()
             .collectAsState(initial = connectionPreferences.getProfiles())
         val mangaList = screenModel.mangaPagerFlow.collectAsLazyPagingItems()
         val navigator = LocalNavigator.currentOrThrow
+        val entryOpenPreferences = remember { Injekt.get<EntryOpenPreferences>() }
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
         val snackbarHostState = remember { SnackbarHostState() }
@@ -190,6 +202,7 @@ data class LocalLibraryScreen(
                     uriValues = uris.map(android.net.Uri::toString),
                     startAtImportConfiguration = true,
                     restrictedConnectionId = sourceId,
+                    allowCrossConnectionForEpub = true,
                     preferredShelfId = state.selectedBookshelfId,
                     returnToCallerAfterImport = true,
                 ),
@@ -416,15 +429,28 @@ data class LocalLibraryScreen(
                                     // Wait until the deletion snapshot or operation is complete.
                                 } else if (selectedIds.isNotEmpty()) {
                                     screenModel.toggleSelection(it)
-                                } else if (!screenModel.openLibraryEntry(it)) {
-                                    navigator.push(
-                                        MangaScreen(
-                                            mangaId = it.id,
-                                            fromSource = true,
-                                            sourceId = it.source,
-                                            mangaUrl = it.url,
-                                        ),
-                                    )
+                                } else {
+                                    val individualComic = scope != LibraryContentScope.BOOK &&
+                                        (screenModel.source as? LocalFolderSource)
+                                            ?.isIndividualFileEntry(it.url) == true
+                                    val mode = if (individualComic) {
+                                        entryOpenPreferences.localMode()
+                                    } else {
+                                        EntryOpenMode.DETAILS
+                                    }
+                                    when (mode) {
+                                        EntryOpenMode.READER -> screenModel.openLibraryEntry(it)
+                                        EntryOpenMode.PAGE_PREVIEW ->
+                                            navigator.push(LanraragiArchivePreviewScreen(it.id, it.source))
+                                        EntryOpenMode.DETAILS -> navigator.push(
+                                            MangaScreen(
+                                                mangaId = it.id,
+                                                fromSource = true,
+                                                sourceId = it.source,
+                                                mangaUrl = it.url,
+                                            ),
+                                        )
+                                    }
                                 }
                             },
                             onMangaLongClick = screenModel::openEntryActions,
@@ -446,6 +472,7 @@ data class LocalLibraryScreen(
             LocalLibraryScreenModel.Dialog.Filter -> {
                 LocalLibraryFilterDialog(
                     filters = state.filters,
+                    rememberFilters = state.rememberFilters,
                     onDismissRequest = screenModel::dismissDialog,
                     onApply = screenModel::applyFilters,
                 )

@@ -21,15 +21,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.CollapsibleBox
+import tachiyomi.presentation.core.components.SortItem
 import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
 internal fun LocalLibraryFilterDialog(
     filters: LocalLibraryFilters,
+    rememberFilters: Boolean,
     onDismissRequest: () -> Unit,
-    onApply: (LocalLibraryFilters) -> Unit,
+    onApply: (LocalLibraryFilters, Boolean) -> Unit,
 ) {
     var draft by remember(filters) { mutableStateOf(filters) }
+    var rememberSelection by remember(rememberFilters) { mutableStateOf(rememberFilters) }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         LazyColumn {
@@ -39,7 +43,10 @@ internal fun LocalLibraryFilterDialog(
                         .background(MaterialTheme.colorScheme.background)
                         .padding(8.dp),
                 ) {
-                    TextButton(onClick = { draft = LocalLibraryFilters() }) {
+                    TextButton(onClick = {
+                        draft = LocalLibraryFilters()
+                        rememberSelection = false
+                    }) {
                         Text(
                             text = stringResource(MR.strings.action_reset),
                             style = LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.primary),
@@ -48,7 +55,7 @@ internal fun LocalLibraryFilterDialog(
                     Spacer(modifier = Modifier.weight(1f))
                     TextButton(
                         onClick = {
-                            onApply(draft)
+                            onApply(draft, rememberSelection)
                             onDismissRequest()
                         },
                     ) {
@@ -59,11 +66,39 @@ internal fun LocalLibraryFilterDialog(
             }
 
             item {
+                tachiyomi.presentation.core.components.CheckboxItem(
+                    label = stringResource(MR.strings.remember_filters),
+                    checked = rememberSelection,
+                    onClick = { rememberSelection = !rememberSelection },
+                )
+            }
+            item {
                 FilterTextField(
                     value = draft.series,
                     onValueChange = { draft = draft.copy(series = it) },
                     label = stringResource(MR.strings.local_library_filter_series),
                 )
+            }
+            item {
+                CollapsibleBox(heading = stringResource(MR.strings.action_sort)) {
+                    androidx.compose.foundation.layout.Column {
+                        listOf(
+                            MR.strings.title,
+                            MR.strings.local_library_sort_added,
+                            MR.strings.local_library_sort_modified,
+                        ).forEachIndexed { index, label ->
+                            SortItem(
+                                label = stringResource(label),
+                                sortDescending = draft.descending.takeIf { draft.sort == index },
+                            ) {
+                                draft = draft.copy(
+                                    sort = index,
+                                    descending = if (draft.sort == index) !draft.descending else false,
+                                )
+                            }
+                        }
+                    }
+                }
             }
             item {
                 FilterTextField(

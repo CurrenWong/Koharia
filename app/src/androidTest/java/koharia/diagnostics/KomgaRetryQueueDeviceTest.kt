@@ -29,6 +29,18 @@ class KomgaRetryQueueDeviceTest {
             org.junit.Assert.assertTrue(old == null || old.state == WorkInfo.State.CANCELLED)
             assertEquals(WorkInfo.State.ENQUEUED, context.workManager.getWorkInfoById(second).get()?.state)
             assertEquals(WorkInfo.State.ENQUEUED, context.workManager.getWorkInfoById(other).get()?.state)
+
+            val local = KomgaPageProgressRetryJob.enqueueLocal(
+                sourceId = sourceId,
+                url = url,
+                page = 4,
+                total = 10,
+                readAt = System.currentTimeMillis(),
+            )
+            val replaced = context.workManager.getWorkInfoById(second).get()
+            org.junit.Assert.assertTrue(replaced == null || replaced.state == WorkInfo.State.CANCELLED)
+            assertEquals(WorkInfo.State.ENQUEUED, context.workManager.getWorkInfoById(local).get()?.state)
+            assertEquals(WorkInfo.State.ENQUEUED, context.workManager.getWorkInfoById(other).get()?.state)
         } finally {
             KomgaPageProgressRetryJob.cancel(sourceId, url)
             KomgaPageProgressRetryJob.cancel(sourceId - 1, url)

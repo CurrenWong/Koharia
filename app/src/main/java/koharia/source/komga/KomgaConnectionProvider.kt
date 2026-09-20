@@ -3,8 +3,6 @@ package koharia.source.komga
 import androidx.compose.runtime.Composable
 import eu.kanade.tachiyomi.R
 import koharia.connection.ConnectionConfigMode
-import koharia.connection.ConnectionConfigModeInterceptor
-import koharia.connection.ConnectionConfigModeWarning
 import koharia.connection.ConnectionLibrarySettingsAdapter
 import koharia.connection.ConnectionManagementAdapter
 import koharia.connection.ConnectionProvider
@@ -17,8 +15,7 @@ import uy.kohesive.injekt.api.get
 class KomgaConnectionProvider :
     ConnectionProvider,
     ConnectionManagementAdapter,
-    ConnectionLibrarySettingsAdapter,
-    ConnectionConfigModeInterceptor {
+    ConnectionLibrarySettingsAdapter {
     override val id: String = ID
     override val displayName: String = KomgaSource.SOURCE_NAME
     override val iconRes: Int = R.drawable.brand_komga
@@ -76,21 +73,6 @@ class KomgaConnectionProvider :
 
     @Composable
     override fun connectionLibrarySettings() = listOf(KomgaContentClassificationPreferenceGroup())
-
-    override fun warningForConfigMode(mode: ConnectionConfigMode): ConnectionConfigModeWarning? {
-        val classificationManager = Injekt.get<KomgaLibraryClassificationManager>()
-        if (mode != ConnectionConfigMode.Shared || !classificationManager.enabled.get()) return null
-        return ConnectionConfigModeWarning(
-            title = tachiyomi.i18n.MR.strings.komga_library_classification_disable_title,
-            message = tachiyomi.i18n.MR.strings.komga_library_classification_disable_message,
-        )
-    }
-
-    override fun prepareConfigModeChange(mode: ConnectionConfigMode) {
-        if (mode == ConnectionConfigMode.Shared) {
-            Injekt.get<KomgaLibraryClassificationManager>().disableClassification()
-        }
-    }
 
     companion object {
         const val ID = "komga"

@@ -12,6 +12,7 @@ import androidx.core.graphics.green
 import androidx.core.graphics.red
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.Companion.ColorFilterMode
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import koharia.epub.settings.ComicThemePreference
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
@@ -21,12 +22,17 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 
 @Composable
-internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel) {
+internal fun ColumnScope.ColorFilterPage(
+    screenModel: ReaderSettingsScreenModel,
+    showBrightnessAndTheme: Boolean = true,
+) {
     val customBrightness by screenModel.preferences.customBrightness.collectAsState()
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_custom_brightness),
-        pref = screenModel.preferences.customBrightness,
-    )
+    if (showBrightnessAndTheme) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_custom_brightness),
+            pref = screenModel.preferences.customBrightness,
+        )
+    }
 
     /*
      * Sets the brightness of the screen. Range is [-75, 100].
@@ -34,7 +40,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
      * From 1 to 100 it sets that value as brightness.
      * 0 sets system brightness and hides the overlay.
      */
-    if (customBrightness) {
+    if (showBrightnessAndTheme && customBrightness) {
         val customBrightnessValue by screenModel.preferences.customBrightnessValue.collectAsState()
         SliderItem(
             value = customBrightnessValue,
@@ -44,6 +50,12 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             onChange = { screenModel.preferences.customBrightnessValue.set(it) },
             pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         )
+    }
+
+    if (showBrightnessAndTheme) {
+        ComicThemePreference(screenModel.preferences)
+
+        ReaderSettingsGroupDivider()
     }
 
     val colorFilter by screenModel.preferences.colorFilter.collectAsState()

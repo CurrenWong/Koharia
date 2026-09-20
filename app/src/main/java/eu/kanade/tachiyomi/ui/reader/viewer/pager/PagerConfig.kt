@@ -80,6 +80,15 @@ class PagerConfig(
                 },
                 { imagePropertyChangedListener?.invoke() },
             )
+        readerPreferences.readerCustomBackgroundColor
+            .register(
+                {},
+                {
+                    if (readerPreferences.readerTheme.get() == ReaderPreferences.CUSTOM_BACKGROUND_THEME) {
+                        imagePropertyChangedListener?.invoke()
+                    }
+                },
+            )
 
         readerPreferences.imageScaleType
             .register({ imageScaleType = it }, { imagePropertyChangedListener?.invoke() })

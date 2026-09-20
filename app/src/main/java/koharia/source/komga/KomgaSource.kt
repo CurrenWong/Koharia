@@ -22,11 +22,13 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import koharia.connection.ConnectionAccountAdapter
 import koharia.connection.ConnectionBrowseAdapter
+import koharia.connection.ConnectionChapterTitleAdapter
 import koharia.connection.ConnectionDownloadStorageAdapter
 import koharia.connection.ConnectionEpubHistorySyncAdapter
 import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionHealthAdapter
 import koharia.connection.ConnectionHistorySyncAdapter
+import koharia.connection.ConnectionLocalPageProgressAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
@@ -41,6 +43,7 @@ import koharia.connection.ConnectionSource
 import koharia.connection.ConnectionViewerSettingsAdapter
 import koharia.connection.LibraryConnectionProfile
 import koharia.connection.LibraryContentScope
+import koharia.connection.SharedAppPreferences
 import koharia.komga.api.KomgaApiClient
 import koharia.komga.api.KomgaSearchCapabilities
 import koharia.komga.api.dto.BookDto
@@ -105,6 +108,8 @@ class KomgaSource(
     ConnectionHistorySyncAdapter,
     ConnectionEpubHistorySyncAdapter,
     ConnectionPageProgressAdapter,
+    ConnectionLocalPageProgressAdapter,
+    ConnectionChapterTitleAdapter,
     ConnectionEpubProgressAdapter {
 
     private val preferences: SharedPreferences by lazy { sourcePreferences() }
@@ -190,6 +195,10 @@ class KomgaSource(
 
     private val chapterNameTemplate: String
         get() = preferences.getString(PREF_CHAPTER_NAME_TEMPLATE, PREF_CHAPTER_NAME_TEMPLATE_DEFAULT)!!
+    private val chapterTitleMode: KomgaChapterTitleMode
+        get() = KomgaChapterTitleMode.entries.firstOrNull {
+            it.name == preferences.getString(PREF_CHAPTER_TITLE_MODE, null)
+        } ?: KomgaChapterTitleMode.FORMATTED
 
     private val searchCapabilities = KomgaSearchCapabilities(
         readLegacy = {
@@ -213,7 +222,7 @@ class KomgaSource(
         KomgaMetadataCacheStore(application.applicationContext, ::shelfCacheNamespace)
     }
     private val scopedBasePreferences by lazy {
-        Injekt.get<KomgaScopedPreferenceStoreFactory>().basePreferences(id)
+        Injekt.get<SharedAppPreferences>().basePreferences()
     }
     private val browseRefreshRequestedAt = AtomicLong(0L)
 
@@ -440,7 +449,9 @@ class KomgaSource(
     }
 
     override suspend fun prepareReadingStateRestore(chapterUrls: List<String>) {
-        chapterUrls.forEach { eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, it) }
+        chapterUrls.forEach {
+            eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, it)
+        }
     }
 
     override suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean) {
@@ -448,6 +459,11 @@ class KomgaSource(
         eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, chapterUrl)
         apiClient.setBookReadStatus(chapterUrl, read)
         Injekt.get<TrackerManager>().komga.api.invalidateProgressCache(id)
+    }
+
+    override fun detailsChapterTitle(chapterMemo: kotlinx.serialization.json.JsonObject): String? {
+        if (chapterTitleMode != KomgaChapterTitleMode.SOURCE_TITLE) return null
+        return KomgaChapterMemo.readFingerprint(chapterMemo)?.bookTitle?.takeIf(String::isNotBlank)
     }
 
     override suspend fun syncConnectionHistory() {
@@ -503,6 +519,37 @@ class KomgaSource(
             chapterUrl = chapterUrl,
             pageIndex = pageIndex,
             totalPages = totalPages,
+        )
+    }
+
+    override suspend fun acceptRemotePageProgress(
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+        readAt: Long,
+    ) {
+        eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.cancel(id, chapterUrl)
+    }
+
+    override suspend fun recordLocalPageProgress(
+        chapterUrl: String,
+        pageIndex: Int,
+        totalPages: Int,
+        readAt: Long,
+        initialPage: Boolean,
+    ) {
+        if (initialPage || koharia.connection.ConnectionRestoreState.isRestoring ||
+            !chapterUrl.contains("/api/v1/books/") ||
+            pageIndex !in 0 until totalPages
+        ) {
+            return
+        }
+        eu.kanade.tachiyomi.data.track.komga.KomgaPageProgressRetryJob.enqueueLocal(
+            sourceId = id,
+            url = chapterUrl,
+            page = pageIndex,
+            total = totalPages,
+            readAt = readAt,
         )
     }
 
@@ -1219,6 +1266,20 @@ class KomgaSource(
             default = PREF_CHAPTER_NAME_TEMPLATE_DEFAULT,
             dialogMessage = screen.context.stringResource(MR.strings.komga_pref_chapter_name_template_dialog),
         )
+        androidx.preference.ListPreference(screen.context).apply {
+            key = PREF_CHAPTER_TITLE_MODE
+            title = screen.context.stringResource(MR.strings.komga_chapter_title_mode)
+            entries = arrayOf(
+                screen.context.stringResource(MR.strings.komga_chapter_title_formatted),
+                screen.context.stringResource(MR.strings.komga_chapter_title_source),
+            )
+            entryValues = arrayOf(
+                KomgaChapterTitleMode.FORMATTED.name,
+                KomgaChapterTitleMode.SOURCE_TITLE.name,
+            )
+            setDefaultValue(KomgaChapterTitleMode.FORMATTED.name)
+            summary = "%s"
+        }.also(screen::addPreference)
     }
 
     suspend fun getBrowseLibraries(forceRefresh: Boolean = false): List<LibraryDto> {
@@ -1635,6 +1696,9 @@ private const val AUTH_MODE_API_KEY = "ApiKey"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
 private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({size})"
+private const val PREF_CHAPTER_TITLE_MODE = "chapter_title_mode"
+
+private enum class KomgaChapterTitleMode { FORMATTED, SOURCE_TITLE }
 private const val PREF_PERSISTENT_FILTERS_ENABLED = "Persistent filters enabled"
 private const val PREF_PERSISTENT_FILTERS_ENABLED_COMIC = "Persistent filters enabled comic"
 private const val PREF_PERSISTENT_FILTERS_ENABLED_BOOK = "Persistent filters enabled book"

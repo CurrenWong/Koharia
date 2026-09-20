@@ -8,7 +8,7 @@ import androidx.fragment.app.FragmentContainerView
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.lifecycleScope
 import eu.kanade.tachiyomi.R
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.epub.font.EpubFontManager
 import koharia.epub.session.EpubReaderSessionRepository
 import koharia.epub.settings.EpubLayoutPreferences
@@ -28,7 +28,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
 
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
     private val fontManager: EpubFontManager = Injekt.get()
-    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get()
+    private val sharedAppPreferences: SharedAppPreferences = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
         get() = requireArguments().getLong(ARG_CHAPTER_ID)
@@ -38,7 +38,7 @@ internal class EpubPaginationScannerFragment : Fragment() {
         get() = requireArguments().getLong(ARG_GENERATION)
     private val epubLayoutPreferences by lazy {
         (activity as? EpubReaderActivity)?.sessionEpubLayoutPreferences() ?: if (sourceId > 0L) {
-            scopedPreferenceStoreFactory.epubLayoutPreferences(sourceId)
+            sharedAppPreferences.epubLayoutPreferences()
         } else {
             Injekt.get<EpubLayoutPreferences>()
         }

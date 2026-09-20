@@ -97,6 +97,8 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
     private var mangaToUpdate: List<LibraryManga> = mutableListOf()
 
     override suspend fun doWork(): Result {
+        if (uy.kohesive.injekt.Injekt.get<koharia.connection.SharedConfigMigration>().isPending()) return Result.retry()
+
         if (tags.contains(WORK_NAME_AUTO)) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
                 val preferences = Injekt.get<LibraryPreferences>()

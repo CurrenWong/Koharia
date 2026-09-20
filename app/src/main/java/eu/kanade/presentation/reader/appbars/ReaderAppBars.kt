@@ -1,8 +1,10 @@
 package eu.kanade.presentation.reader.appbars
 
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -11,12 +13,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -32,6 +36,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.reader.components.ChapterNavigator
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
+import eu.kanade.tachiyomi.ui.reader.setting.ComicReaderToolbarAction
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import tachiyomi.presentation.core.components.material.padding
@@ -39,6 +44,8 @@ import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
 
 private val readerBarsSlideAnimationSpec = tween<IntOffset>(200)
 private val readerBarsFadeAnimationSpec = tween<Float>(150)
+
+enum class ComicBottomPanel { NONE, SETTINGS }
 
 @Composable
 fun ReaderAppBars(
@@ -68,11 +75,22 @@ fun ReaderAppBars(
     onPageIndexChangeFinished: ((Int) -> Unit)? = null,
 
     readingMode: ReadingMode,
+    toolbarActions: List<ComicReaderToolbarAction>,
     onClickReadingMode: () -> Unit,
     orientation: ReaderOrientation,
     onClickOrientation: () -> Unit,
     cropEnabled: Boolean,
     onClickCropBorder: () -> Unit,
+    doublePages: Boolean,
+    supportsPageLayout: Boolean,
+    shiftDoublePages: Boolean,
+    activePanel: ComicBottomPanel,
+    settingsContent: @Composable () -> Unit,
+    onClickBrightness: () -> Unit,
+    onClickBackground: () -> Unit,
+    onClickPageLayout: () -> Unit,
+    onClickShiftDoublePages: () -> Unit,
+    onClickBookmark: () -> Unit,
     onClickSettings: () -> Unit,
     onPdfReflow: (() -> Unit)? = null,
 ) {
@@ -144,7 +162,7 @@ fun ReaderAppBars(
             enter = slideInVertically(readerBarsSlideAnimationSpec) { it } + fadeIn(readerBarsFadeAnimationSpec),
             exit = slideOutVertically(readerBarsSlideAnimationSpec) { it } + fadeOut(readerBarsFadeAnimationSpec),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small)) {
+            Column {
                 if (chapterNavigatorType.isHorizontal()) {
                     ChapterNavigator(
                         type = chapterNavigatorType,
@@ -159,18 +177,50 @@ fun ReaderAppBars(
                         displayCurrentText = visiblePageRangeText(visiblePageStart, visiblePageEnd),
                     )
                 }
+                EInkAnimatedVisibility(
+                    visible = activePanel == ComicBottomPanel.SETTINGS,
+                    enter = expandVertically(
+                        animationSpec = tween(200),
+                        expandFrom = androidx.compose.ui.Alignment.Bottom,
+                    ) + fadeIn(readerBarsFadeAnimationSpec),
+                    exit = shrinkVertically(
+                        animationSpec = tween(200),
+                        shrinkTowards = androidx.compose.ui.Alignment.Bottom,
+                    ) + fadeOut(readerBarsFadeAnimationSpec),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .background(backgroundColor),
+                    ) {
+                        settingsContent()
+                    }
+                }
                 ReaderBottomBar(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(backgroundColor)
+                        .padding(top = if (activePanel == ComicBottomPanel.NONE) MaterialTheme.padding.small else 0.dp)
                         .padding(horizontal = MaterialTheme.padding.small)
                         .windowInsetsPadding(WindowInsets.navigationBars),
+                    actions = toolbarActions,
                     readingMode = readingMode,
                     onClickReadingMode = onClickReadingMode,
                     orientation = orientation,
                     onClickOrientation = onClickOrientation,
                     cropEnabled = cropEnabled,
                     onClickCropBorder = onClickCropBorder,
+                    doublePages = doublePages,
+                    supportsPageLayout = supportsPageLayout,
+                    shiftDoublePages = shiftDoublePages,
+                    bookmarked = bookmarked,
+                    settingsSelected = activePanel == ComicBottomPanel.SETTINGS,
+                    onClickBrightness = onClickBrightness,
+                    onClickBackground = onClickBackground,
+                    onClickPageLayout = onClickPageLayout,
+                    onClickShiftDoublePages = onClickShiftDoublePages,
+                    onClickBookmark = onClickBookmark,
                     onClickSettings = onClickSettings,
                 )
             }

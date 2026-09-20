@@ -48,8 +48,8 @@ import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
 import koharia.connection.ConnectionMangaProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.connection.ConnectionViewerSettingsAdapter
+import koharia.connection.SharedAppPreferences
 import koharia.domain.chapter.interactor.FilterChaptersForDownload
 import koharia.domain.epub.interactor.GetEpubProgress
 import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
@@ -165,7 +165,7 @@ class MangaScreenModel(
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
     private val getEpubRemoteProgressCache: GetEpubRemoteProgressCache = Injekt.get(),
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
-    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get(),
+    private val sharedAppPreferences: SharedAppPreferences = Injekt.get(),
     val snackbarHostState: SnackbarHostState = SnackbarHostState(),
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -233,7 +233,7 @@ class MangaScreenModel(
                 return@launchIO
             }
             val resolvedMangaId = manga.id
-            val cachedOnlyPreference = scopedPreferenceStoreFactory.basePreferences(manga.source).downloadedOnly
+            val cachedOnlyPreference = sharedAppPreferences.basePreferences().downloadedOnly
 
             val chaptersDeferred = async {
                 getMangaAndChapters.awaitChapters(resolvedMangaId, applyScanlatorFilter = true)

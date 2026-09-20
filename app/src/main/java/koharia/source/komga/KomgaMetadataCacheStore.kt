@@ -30,6 +30,7 @@ internal class KomgaMetadataCacheStore(
     private val cacheDir = LocalTempCacheDirectoryProvider.metadataCacheDir(context)
 
     fun isEligible(request: Request): Boolean {
+        if (request.isKomgaProgressSync) return false
         return when (request.method) {
             "GET" -> isEligibleUrl(request.url.toString())
             "POST" -> request.body?.contentType()?.subtype == "json" &&

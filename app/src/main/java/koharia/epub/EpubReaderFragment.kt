@@ -23,7 +23,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
 import koharia.epub.locator.toNavigatorLocator
@@ -95,7 +95,7 @@ class EpubReaderFragment : Fragment() {
     private val sessionRepository: EpubReaderSessionRepository = Injekt.get()
     private val fontManager: EpubFontManager = Injekt.get()
     private val eInkPreferences: EInkPreferences = Injekt.get()
-    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get()
+    private val sharedAppPreferences: SharedAppPreferences = Injekt.get()
     private val epubPreferencesBridge = EpubPreferencesBridge()
     private val chapterId: Long
         get() = requireArguments().getLong(ARG_CHAPTER_ID)
@@ -103,7 +103,7 @@ class EpubReaderFragment : Fragment() {
         get() = requireArguments().getLong(ARG_SOURCE_ID, -1L)
     private val epubLayoutPreferences by lazy {
         (activity as? EpubReaderActivity)?.sessionEpubLayoutPreferences() ?: if (sourceId > 0L) {
-            scopedPreferenceStoreFactory.epubLayoutPreferences(sourceId)
+            sharedAppPreferences.epubLayoutPreferences()
         } else {
             Injekt.get<EpubLayoutPreferences>()
         }

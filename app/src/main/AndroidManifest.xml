@@ -42,6 +42,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Tachiyomi">
 
+        <activity android:name="koharia.connection.ui.SharedConfigMigrationActivity" android:exported="false" />
         <activity
             android:name=".ui.main.MainActivity"
             android:exported="true"

@@ -33,11 +33,13 @@ import kotlin.random.Random
 internal fun LanraragiFilterSheet(
     initial: LanraragiFilter,
     downloadedOnly: Boolean,
+    rememberFilters: Boolean,
     onDismissRequest: () -> Unit,
-    onApply: (LanraragiFilter, Boolean) -> Unit,
+    onApply: (LanraragiFilter, Boolean, Boolean) -> Unit,
 ) {
     var draft by remember { mutableStateOf(initial) }
     var downloads by remember { mutableStateOf(downloadedOnly) }
+    var rememberSelection by remember { mutableStateOf(rememberFilters) }
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         LazyColumn {
             stickyHeader {
@@ -46,10 +48,11 @@ internal fun LanraragiFilterSheet(
                         TextButton(onClick = {
                             draft = LanraragiFilter(query = initial.query, category = initial.category)
                             downloads = false
+                            rememberSelection = false
                         }) { Text(stringResource(MR.strings.action_reset)) }
                         Spacer(Modifier.weight(1f))
                         Button(onClick = {
-                            onApply(draft, downloads)
+                            onApply(draft, downloads, rememberSelection)
                             onDismissRequest()
                         }) { Text(stringResource(MR.strings.action_filter)) }
                     }
@@ -61,6 +64,9 @@ internal fun LanraragiFilterSheet(
                     draft = draft.copy(grouped = !draft.grouped)
                 }
                 CheckboxItem(stringResource(MR.strings.lanraragi_downloaded), downloads) { downloads = !downloads }
+                CheckboxItem(stringResource(MR.strings.remember_filters), rememberSelection) {
+                    rememberSelection = !rememberSelection
+                }
                 HorizontalDivider()
                 SelectItem(
                     label = stringResource(MR.strings.lanraragi_read_status),

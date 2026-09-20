@@ -4,9 +4,10 @@ import android.os.Build
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
+import koharia.connection.SharedAppPreferences
 import koharia.epub.alignToEpubPositions
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
+import koharia.source.komga.komgaProgressSync
 import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.MediaType.Companion.toMediaType
@@ -31,7 +32,7 @@ import kotlin.math.roundToLong
 class KomgaEpubProgressSyncService(
     private val basePreferences: BasePreferences,
     private val sourceManager: SourceManager,
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory,
+    private val sharedAppPreferences: SharedAppPreferences,
 ) {
 
     private val recentPushes = ConcurrentHashMap<ProgressionKey, RecentPush>()
@@ -46,6 +47,7 @@ class KomgaEpubProgressSyncService(
             GET("$normalizedBookUrl/progression", source.currentReadiumHeaders())
                 .newBuilder()
                 .cacheControl(CacheControl.FORCE_NETWORK)
+                .komgaProgressSync()
                 .build(),
         )
             .await()
@@ -115,11 +117,12 @@ class KomgaEpubProgressSyncService(
             .url("$normalizedBookUrl/progression")
             .headers(source.currentReadiumHeaders())
             .put(payload.toString().toRequestBody("application/json".toMediaType()))
+            .komgaProgressSync()
             .build()
 
         source.client.newCall(request).await().use { response ->
             response.requireSuccess("push")
-            if (scopedPreferenceStoreFactory.epubReaderPreferences(sourceId)
+            if (sharedAppPreferences.epubReaderPreferences()
                     .correctRemoteServerTimestamps.get()
             ) {
                 recentPushes[ProgressionKey(sourceId, normalizedBookUrl)] = RecentPush(
@@ -136,7 +139,7 @@ class KomgaEpubProgressSyncService(
         rawModifiedAt: Date,
         serverDate: Date?,
     ): Date {
-        val preferences = scopedPreferenceStoreFactory.epubReaderPreferences(sourceId)
+        val preferences = sharedAppPreferences.epubReaderPreferences()
         if (!preferences.correctRemoteServerTimestamps.get()) return rawModifiedAt
 
         val offsetPreference = preferences.remoteServerTimestampOffsetMinutes(sourceId)

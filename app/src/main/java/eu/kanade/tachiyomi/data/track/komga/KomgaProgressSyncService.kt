@@ -253,6 +253,7 @@ class KomgaProgressSyncService(
         expectedPage: Int,
         expectedCompleted: Boolean,
         expectedDate: String?,
+        localReadAt: Long,
     ): Boolean = pageWriteMutex.withLock {
         if (koharia.connection.ConnectionRestoreState.isRestoring) throw java.io.IOException("Restore in progress")
         if (sourceManager.get(sourceId) !is KomgaSource) {
@@ -265,7 +266,24 @@ class KomgaProgressSyncService(
         }
         val remote = trackerManager.komga.api.getBookProgress(chapterUrl, sourceId) ?: return@withLock true
         if (remote.totalPages != totalPages || totalPages <= 0) return@withLock true
-        if (!canRetryKomgaPageProgress(remote, expectedPage, expectedCompleted, expectedDate)) return@withLock true
+        if (localReadAt > 0L) {
+            val remoteReadAt = remote.readDate?.let(::parseReadDate)?.time
+            val hasUnparseableRemoteDate = remote.readDate != null && remoteReadAt == null
+            if (hasUnparseableRemoteDate ||
+                !shouldUploadPendingKomgaPageProgress(
+                    remotePage = remote.pageIndex,
+                    remoteCompleted = remote.completed,
+                    targetPage = pageIndex,
+                    targetCompleted = pageIndex + 1 >= totalPages,
+                    remoteReadAt = remoteReadAt,
+                    localReadAt = localReadAt,
+                )
+            ) {
+                return@withLock true
+            }
+        } else if (!canRetryKomgaPageProgress(remote, expectedPage, expectedCompleted, expectedDate)) {
+            return@withLock true
+        }
         if (koharia.connection.ConnectionRestoreState.isRestoring) throw java.io.IOException("Restore in progress")
         trackerManager.komga.api.updateBookProgress(sourceId, chapterUrl, pageIndex + 1, pageIndex + 1 >= totalPages)
         confirmedPageProgress["$sourceId:$chapterUrl"] = remote.copy(
@@ -525,3 +543,15 @@ internal fun canRetryKomgaPageProgress(
     expectedDate: String?,
 ): Boolean = (remote.pageIndex ?: -1) == expectedPage && remote.completed == expectedCompleted &&
     (expectedDate == null || remote.readDate == expectedDate)
+
+internal fun shouldUploadPendingKomgaPageProgress(
+    remotePage: Int?,
+    remoteCompleted: Boolean,
+    targetPage: Int,
+    targetCompleted: Boolean,
+    remoteReadAt: Long?,
+    localReadAt: Long,
+): Boolean {
+    if (remotePage == targetPage && remoteCompleted == targetCompleted) return false
+    return remoteReadAt == null || localReadAt >= remoteReadAt
+}

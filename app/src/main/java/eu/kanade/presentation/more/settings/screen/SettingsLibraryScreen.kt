@@ -12,6 +12,8 @@ import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import koharia.connection.ConnectionLibrarySettingsAdapter
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionRegistry
+import koharia.connection.EntryOpenMode
+import koharia.connection.EntryOpenPreferences
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -52,9 +54,35 @@ object SettingsLibraryScreen : SearchableSettings {
 
         return providerSettings + listOf(
             getDisplayGroup(libraryPreferences),
-            getGlobalUpdateGroup(libraryPreferences),
+            getEntryOpeningGroup(),
             getChapterSettingsGroup(libraryPreferences),
+            getGlobalUpdateGroup(libraryPreferences),
             getBehaviorGroup(libraryPreferences),
+        )
+    }
+
+    @Composable
+    private fun getEntryOpeningGroup(): Preference.PreferenceGroup {
+        val preferences = remember { Injekt.get<EntryOpenPreferences>() }
+        val entries = persistentMapOf(
+            EntryOpenMode.READER.name to stringResource(MR.strings.entry_open_reader),
+            EntryOpenMode.PAGE_PREVIEW.name to stringResource(MR.strings.entry_open_page_preview),
+            EntryOpenMode.DETAILS.name to stringResource(MR.strings.entry_open_details),
+        )
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.entry_open_group),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = preferences.localSingleComic,
+                    entries = entries,
+                    title = stringResource(MR.strings.entry_open_local_single),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = preferences.komgaSingleBook,
+                    entries = entries,
+                    title = stringResource(MR.strings.entry_open_komga_book),
+                ),
+            ),
         )
     }
 
@@ -62,21 +90,25 @@ object SettingsLibraryScreen : SearchableSettings {
     private fun getDisplayGroup(
         libraryPreferences: LibraryPreferences,
     ): Preference.PreferenceGroup {
-        val columnsPref = libraryPreferences.portraitColumns
-        val columns by columnsPref.collectAsState()
+        val portraitColumns by libraryPreferences.portraitColumns.collectAsState()
+        val landscapeColumns by libraryPreferences.landscapeColumns.collectAsState()
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_display),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.SliderPreference(
-                    value = columns.coerceIn(LibraryColumnsRange),
-                    title = stringResource(MR.strings.pref_library_columns),
-                    valueString = libraryColumnsValueString(columns),
+                    value = portraitColumns.coerceIn(LibraryColumnsRange),
+                    title = stringResource(MR.strings.pref_library_columns_portrait),
+                    valueString = libraryColumnsValueString(portraitColumns),
                     valueRange = LibraryColumnsRange,
-                    onValueChanged = {
-                        columnsPref.set(it)
-                        libraryPreferences.landscapeColumns.set(it)
-                    },
+                    onValueChanged = libraryPreferences.portraitColumns::set,
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = landscapeColumns.coerceIn(LibraryColumnsRange),
+                    title = stringResource(MR.strings.pref_library_columns_landscape),
+                    valueString = libraryColumnsValueString(landscapeColumns),
+                    valueRange = LibraryColumnsRange,
+                    onValueChanged = libraryPreferences.landscapeColumns::set,
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = libraryPreferences.showLibraryReadProgress,

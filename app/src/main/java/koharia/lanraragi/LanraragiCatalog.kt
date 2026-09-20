@@ -2,9 +2,11 @@ package koharia.lanraragi
 
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiReadState
+import kotlinx.serialization.Serializable
 import java.util.Locale
 import kotlin.random.Random
 
+@Serializable
 data class LanraragiFilter(
     val query: String = "",
     val category: String? = null,

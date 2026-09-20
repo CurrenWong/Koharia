@@ -31,6 +31,7 @@ class KomgaPageProgressRetryJob(context: Context, params: WorkerParameters) : Co
                 inputData.getInt("expectedPage", -1),
                 inputData.getBoolean("expectedCompleted", false),
                 inputData.getString("expectedDate"),
+                inputData.getLong("localReadAt", -1L),
             )
             Result.success()
         } catch (error: Exception) {
@@ -54,6 +55,38 @@ class KomgaPageProgressRetryJob(context: Context, params: WorkerParameters) : Co
                         "expectedPage" to (baseline.pageIndex ?: -1),
                         "expectedCompleted" to baseline.completed,
                         "expectedDate" to baseline.readDate,
+                        "localReadAt" to -1L,
+                    ),
+                )
+                .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+                .setInitialDelay(10, TimeUnit.SECONDS)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+                .build()
+            Injekt.get<Application>().workManager.enqueueUniqueWork(
+                name(sourceId, url),
+                ExistingWorkPolicy.REPLACE,
+                request,
+            )
+            return request.id
+        }
+
+        fun enqueueLocal(
+            sourceId: Long,
+            url: String,
+            page: Int,
+            total: Int,
+            readAt: Long,
+        ): UUID {
+            val request = OneTimeWorkRequestBuilder<KomgaPageProgressRetryJob>()
+                .setInputData(
+                    workDataOf(
+                        "source" to sourceId,
+                        "url" to url,
+                        "page" to page,
+                        "total" to total,
+                        "expectedPage" to -1,
+                        "expectedCompleted" to false,
+                        "localReadAt" to readAt,
                     ),
                 )
                 .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))

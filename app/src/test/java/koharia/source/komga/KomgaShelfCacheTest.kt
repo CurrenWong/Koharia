@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -84,6 +85,47 @@ class KomgaShelfCacheTest {
             },
         )
         assertEquals(emptyList<koharia.komga.api.dto.LibraryDto>(), api.getLibraries())
+    }
+
+    @Test
+    fun `progress requests are never stored as shelf metadata`() {
+        val store = KomgaMetadataCacheStore(context()) { "progress" }
+        val request = Request.Builder()
+            .url("https://komga.test/api/v1/books/book/read-progress")
+            .komgaProgressSync()
+            .build()
+        assertEquals(false, store.isEligible(request))
+    }
+
+    @Test
+    fun `cached-only mode permits only tagged progress traffic while online`() {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        var requests = 0
+        server.createContext("/") { exchange ->
+            requests++
+            exchange.sendResponseHeaders(204, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val client = OkHttpClient.Builder()
+                .addInterceptor(KomgaOfflineInterceptor(context(), { "progress-only" }) { true })
+                .build()
+            val baseUrl = "http://127.0.0.1:${server.address.port}"
+            val progress = Request.Builder()
+                .url("$baseUrl/api/v1/books/book/read-progress")
+                .patch(ByteArray(0).toRequestBody())
+                .komgaProgressSync()
+                .build()
+            client.newCall(progress).execute().use { assertEquals(204, it.code) }
+            assertEquals(1, requests)
+
+            val shelf = Request.Builder().url("$baseUrl/api/v1/series").build()
+            assertEquals(true, runCatching { client.newCall(shelf).execute().close() }.isFailure)
+            assertEquals(1, requests)
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test

@@ -12,6 +12,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.appcompat.view.ContextThemeWrapper
 import androidx.core.content.getSystemService
+import androidx.core.graphics.ColorUtils
 import androidx.core.net.toUri
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.ui.UiPreferences
@@ -114,6 +115,8 @@ fun Context.createReaderThemeContext(): Context {
             ThemeMode.SYSTEM -> applicationContext.isNightMode()
             else -> themeMode == ThemeMode.DARK
         }
+        ReaderPreferences.CUSTOM_BACKGROUND_THEME ->
+            ColorUtils.calculateLuminance(readerPreferences.readerCustomBackgroundColor.get()) < 0.5
         else -> false // White
     }
     val expected = if (isDarkBackground) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO

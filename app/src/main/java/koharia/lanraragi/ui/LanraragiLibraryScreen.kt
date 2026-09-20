@@ -1,5 +1,6 @@
 package koharia.lanraragi.ui
 
+import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -35,6 +37,8 @@ import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.browse.BrowseSourceContent
+import eu.kanade.presentation.library.components.MangaReadProgress
+import eu.kanade.presentation.library.components.MangaReadProgressDisplay
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import koharia.connection.ConnectionBrowseScreen
@@ -42,6 +46,7 @@ import koharia.connection.ConnectionPreferences
 import koharia.connection.ui.LibraryConnectionProfilesScreen
 import koharia.lanraragi.LanraragiEntryDestination
 import koharia.lanraragi.LanraragiEntryOpenManager
+import koharia.lanraragi.flattenLanraragiTank
 import koharia.lanraragi.isLanraragiConnectivityFailure
 import koharia.lanraragi.lanraragiEntryDestination
 import koharia.source.lanraragi.LanraragiSettingsScreen
@@ -50,12 +55,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.jvm.Transient
@@ -95,6 +102,18 @@ class LanraragiLibraryScreen(
             rememberScreenModel(tag = "$sourceId:${source.name}") { LanraragiLibraryScreenModel(source, initialQuery) }
         runtimeModel = model
         val state by model.state.collectAsState()
+        val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
+        val showReadProgress by libraryPreferences.showLibraryReadProgress.collectAsState()
+        val configuration = LocalConfiguration.current
+        val columnPreference = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            libraryPreferences.landscapeColumns
+        } else {
+            libraryPreferences.portraitColumns
+        }
+        val columnCount by columnPreference.collectAsState()
+        val readProgress = remember(state.entries, state.readStates) {
+            lanraragiReadProgress(source.id, state.entries, state.readStates)
+        }
         val status by source.status.collectAsState()
         val pages = model.pages.collectAsLazyPagingItems()
         val navigator = LocalNavigator.currentOrThrow
@@ -192,9 +211,16 @@ class LanraragiLibraryScreen(
                         modifier = Modifier.weight(
                             1f,
                         ),
-                        source = source, mangaList = pages, columns = GridCells.Adaptive(120.dp),
+                        source = source,
+                        mangaList = pages,
+                        columns = if (columnCount > 0) GridCells.Fixed(columnCount) else GridCells.Adaptive(120.dp),
                         displayMode = state.displayMode,
                         snackbarHostState = snackbar, contentPadding = PaddingValues(0.dp), showLibraryBadges = false,
+                        readProgress = if (showReadProgress) {
+                            { manga -> readProgress[manga.url] }
+                        } else {
+                            null
+                        },
                         onWebViewClick = {
                             navigator.push(LanraragiSettingsScreen(sourceId))
                         }, onHelpClick = { navigator.push(LanraragiSettingsScreen(sourceId)) },
@@ -217,9 +243,57 @@ class LanraragiLibraryScreen(
             LanraragiFilterSheet(
                 initial = state.filter,
                 downloadedOnly = state.downloadedOnly,
+                rememberFilters = state.rememberFilters,
                 onDismissRequest = { filters = false },
-                onApply = { filter, downloaded -> model.applyFilters(filter, downloaded) },
+                onApply = model::applyFilters,
             )
         }
     }
+}
+
+internal fun lanraragiReadProgress(
+    sourceId: Long,
+    entries: List<koharia.domain.lanraragi.LanraragiEntry>,
+    states: List<koharia.domain.lanraragi.LanraragiReadState>,
+): Map<String, MangaReadProgress> {
+    val entriesById = entries.associateBy { it.id }
+    val statesById = states.associateBy { it.archiveId }
+    fun page(entry: koharia.domain.lanraragi.LanraragiEntry): Pair<Int, Int> {
+        val local = statesById[entry.id]?.takeIf { it.localUnread || it.pending || it.readAt >= entry.lastRead }
+        val count = local?.totalPages?.takeIf { it > 0 } ?: entry.pageCount
+        val page = if (local?.localUnread == true) 0 else local?.let { it.pageIndex + 1 } ?: entry.progress
+        return page.coerceAtLeast(0) to count.coerceAtLeast(0)
+    }
+    return entries.mapNotNull { entry ->
+        val progress = when (entry.kind) {
+            koharia.domain.lanraragi.LanraragiEntry.Kind.ARCHIVE -> {
+                val (page, count) = page(entry)
+                if (count <= 0) {
+                    null
+                } else {
+                    MangaReadProgress(
+                        readCount = (page.toDouble() / count * 100).toLong().coerceIn(0, 100),
+                        totalChapterCount = 100,
+                        display = MangaReadProgressDisplay.PERCENTAGE,
+                    )
+                }
+            }
+            koharia.domain.lanraragi.LanraragiEntry.Kind.TANK -> {
+                val members = flattenLanraragiTank(entry, entriesById).filter { it.available }
+                if (members.isEmpty()) {
+                    null
+                } else {
+                    MangaReadProgress(
+                        readCount = members.count { member ->
+                            val (memberPage, count) = page(member)
+                            count > 0 && memberPage >= count
+                        }.toLong(),
+                        totalChapterCount = members.size.toLong(),
+                    )
+                }
+            }
+            koharia.domain.lanraragi.LanraragiEntry.Kind.CATEGORY -> null
+        }
+        progress?.let { "/lanraragi/$sourceId/${entry.kind.name.lowercase()}/${entry.id}" to it }
+    }.toMap()
 }

@@ -93,6 +93,15 @@ class WebtoonConfig(
             .distinctUntilChanged()
             .onEach { themeChangedListener?.invoke() }
             .launchIn(scope)
+        readerPreferences.readerCustomBackgroundColor.changes()
+            .drop(1)
+            .distinctUntilChanged()
+            .onEach {
+                if (readerPreferences.readerTheme.get() == ReaderPreferences.CUSTOM_BACKGROUND_THEME) {
+                    themeChangedListener?.invoke()
+                }
+            }
+            .launchIn(scope)
     }
 
     override var navigator: ViewerNavigation = defaultNavigation()

@@ -1,10 +1,10 @@
 package koharia.epub.progress
 
+import koharia.connection.SharedAppPreferences
 import koharia.domain.epub.interactor.GetEpubRemoteProgressCache
 import koharia.domain.epub.interactor.UpsertEpubRemoteProgressCache
 import koharia.domain.epub.model.EpubRemoteProgressCache
 import koharia.komga.download.KomgaChapterMemo
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -18,7 +18,7 @@ class KomgaEpubRemoteProgressCoordinator(
     private val syncService: KomgaEpubProgressSyncService,
     private val getCache: GetEpubRemoteProgressCache,
     private val upsertCache: UpsertEpubRemoteProgressCache,
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory,
+    private val sharedAppPreferences: SharedAppPreferences,
 ) {
     suspend fun syncManga(
         mangaId: Long,
@@ -27,7 +27,7 @@ class KomgaEpubRemoteProgressCoordinator(
         force: Boolean = false,
         includeUnknownChapters: Boolean = false,
     ): List<EpubRemoteProgressCache> = coroutineScope {
-        if (scopedPreferenceStoreFactory.basePreferences(sourceId).incognitoMode.get()) {
+        if (sharedAppPreferences.basePreferences().incognitoMode.get()) {
             return@coroutineScope emptyList()
         }
         val existing = getCache.awaitByMangaId(mangaId).associateBy { it.chapterId }

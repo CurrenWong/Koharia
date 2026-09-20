@@ -17,7 +17,7 @@ import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import koharia.connection.ConnectionPreferences
 import koharia.connection.ConnectionProfileManager
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.lanraragi.ui.LanraragiArchivePreviewScreen
 import koharia.lanraragi.ui.LanraragiLibraryScreen
@@ -64,7 +64,7 @@ class LanraragiArchiveOpeningDeviceTest {
             Injekt.get<SourceManager>().get(profile.id) as LanraragiSource
         }
         source.refreshLibrary().getOrThrow()
-        val readerPrefs = Injekt.get<ConnectionScopedPreferenceStoreFactory>().readerPreferences(source.id)
+        val readerPrefs = Injekt.get<SharedAppPreferences>().readerPreferences()
         readerPrefs.showNavigationOverlayNewUser.set(false)
         readerPrefs.showNavigationOverlayOnStart.set(false)
         val entries = source.repository.entries(source.id)

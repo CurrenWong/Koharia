@@ -13,7 +13,7 @@ import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import koharia.connection.ConnectionProfileManager
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.lanraragi.ui.LanraragiArchivePreviewScreen
 import koharia.source.lanraragi.LanraragiConnectionProvider
 import koharia.source.lanraragi.LanraragiPreferences
@@ -71,7 +71,7 @@ class LanraragiReviewRegressionDeviceTest {
         val base = Injekt.get<BasePreferences>()
         val wasIncognito = base.incognitoMode.get()
         base.incognitoMode.set(false)
-        val readerPrefs = Injekt.get<ConnectionScopedPreferenceStoreFactory>().readerPreferences(source.id)
+        val readerPrefs = Injekt.get<SharedAppPreferences>().readerPreferences()
         readerPrefs.showNavigationOverlayNewUser.set(false)
         readerPrefs.showNavigationOverlayOnStart.set(false)
         control("metadata_delay=5")
@@ -101,7 +101,7 @@ class LanraragiReviewRegressionDeviceTest {
         val base = Injekt.get<BasePreferences>()
         val wasIncognito = base.incognitoMode.get()
         base.incognitoMode.set(false)
-        val prefs = Injekt.get<ConnectionScopedPreferenceStoreFactory>().readerPreferences(source.id)
+        val prefs = Injekt.get<SharedAppPreferences>().readerPreferences()
         prefs.showNavigationOverlayNewUser.set(false)
         prefs.showNavigationOverlayOnStart.set(false)
         try {

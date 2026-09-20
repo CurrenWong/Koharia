@@ -21,6 +21,7 @@ import android.view.View
 import android.view.View.LAYER_TYPE_HARDWARE
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
@@ -28,11 +29,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,13 +59,15 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.ui.EInkPreferences
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OrientationSelectDialog
+import eu.kanade.presentation.reader.ReaderBufferingIndicator
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
-import eu.kanade.presentation.reader.ReaderPageIndicator
+import eu.kanade.presentation.reader.ReaderStatusIndicator
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
+import eu.kanade.presentation.reader.appbars.ComicBottomPanel
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
-import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
+import eu.kanade.presentation.reader.settings.ComicReaderSettingsContent
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.crash.CrashDiagnostics
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
@@ -78,12 +81,15 @@ import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibraryFirst
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
+import eu.kanade.tachiyomi.ui.reader.loader.EmptyReaderBufferingState
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderToolbarActions
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.L2RPagerViewer
@@ -96,7 +102,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.document.toDocumentRenderSettings
 import koharia.epub.DocumentBookInfoDialog
 import koharia.epub.EpubBottomPanel
@@ -109,7 +115,6 @@ import koharia.epub.model.EpubOpenRequest
 import koharia.epub.service.EpubReaderSupportResolution
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
-import koharia.epub.settings.EpubReaderSettingsSheet
 import koharia.importing.IncomingMediaNavigation
 import koharia.importing.IncomingMediaSessionLocator
 import koharia.pdf.cache.PdfReflowCacheManager
@@ -167,7 +172,7 @@ class ReaderActivity : BaseActivity() {
                     checkNotNull(chapter.chapter.id),
                     file,
                     chapter.chapter.name,
-                    ephemeral = scopedPreferenceStoreFactory.basePreferences(manga.source).incognitoMode.get(),
+                    ephemeral = sharedAppPreferences.basePreferences().incognitoMode.get(),
                     remote = remote,
                 ) {
                         current,
@@ -256,20 +261,13 @@ class ReaderActivity : BaseActivity() {
         }
     }
 
-    private val scopedPreferenceStoreFactory = Injekt.get<ConnectionScopedPreferenceStoreFactory>()
+    private val sharedAppPreferences = Injekt.get<SharedAppPreferences>()
     private val eInkPreferences = Injekt.get<EInkPreferences>()
     val readerPreferences: ReaderPreferences by lazy { viewModel.readerPreferences }
     private val useEpubSettings: Boolean by lazy {
         intent.getBooleanExtra(EXTRA_USE_EPUB_SETTINGS, false)
     }
-    val basePreferences: BasePreferences by lazy {
-        val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
-        if (sourceId > 0L) {
-            scopedPreferenceStoreFactory.basePreferences(sourceId)
-        } else {
-            Injekt.get<BasePreferences>()
-        }
-    }
+    val basePreferences: BasePreferences by lazy { sharedAppPreferences.basePreferences() }
 
     lateinit var binding: ReaderActivityBinding
 
@@ -287,14 +285,7 @@ class ReaderActivity : BaseActivity() {
 
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
 
-    private val epubSettingsBackingStore: PreferenceStore by lazy {
-        val sourceId = intent.extras?.getLong("source", -1L) ?: -1L
-        if (sourceId > 0L) {
-            scopedPreferenceStoreFactory.storeForServer(sourceId)
-        } else {
-            Injekt.get<ScopedPreferenceStore>()
-        }
-    }
+    private val epubSettingsBackingStore: PreferenceStore by lazy { sharedAppPreferences.store() }
     private val epubReaderPreferences by lazy { EpubReaderPreferences(epubSettingsBackingStore) }
     private val epubFontManager: EpubFontManager by lazy { Injekt.get() }
     private val epubSettingsStore by lazy {
@@ -314,6 +305,13 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is created. Initializes the presenter and configuration.
      */
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (needsSharedConfigSelection()) {
+            configStartupDeferred = true
+            super.onCreate(null)
+            redirectToSharedConfigSelection()
+            return
+        }
+
         registerSecureActivity(this)
         if (eInkPreferences.enabled.get()) {
             disableActivityTransition(OVERRIDE_TRANSITION_OPEN)
@@ -460,11 +458,19 @@ class ReaderActivity : BaseActivity() {
     }
 
     override fun onStart() {
+        if (configStartupDeferred) {
+            super.onStart()
+            return
+        }
         super.onStart()
         DownloadNetworkQoS.acquireReader()
     }
 
     override fun onStop() {
+        if (configStartupDeferred) {
+            super.onStop()
+            return
+        }
         DownloadNetworkQoS.releaseReader()
         super.onStop()
     }
@@ -472,6 +478,14 @@ class ReaderActivity : BaseActivity() {
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
         val state by viewModel.state.collectAsState()
         val showPageNumber by readerPreferences.showPageNumber.collectAsState()
+        val showBufferingSpeed by readerPreferences.showBufferingSpeed.collectAsState()
+        val readerStatusPosition by readerPreferences.readerStatusPosition.collectAsState()
+        val showReaderChapterTitle by readerPreferences.showReaderChapterTitle.collectAsState()
+        val showReaderClock by readerPreferences.showReaderClock.collectAsState()
+        val showReaderBattery by readerPreferences.showReaderBattery.collectAsState()
+        val bufferingFlow = state.currentChapter?.pageLoader?.bufferingState ?: EmptyReaderBufferingState
+        val buffering by bufferingFlow.collectAsState()
+        val activeComicPanel = remember { mutableStateOf(ComicBottomPanel.NONE) }
         val activeEpubPanel = remember { mutableStateOf(EpubBottomPanel.NONE) }
         val settingsScreenModel = remember {
             ReaderSettingsScreenModel(
@@ -483,23 +497,40 @@ class ReaderActivity : BaseActivity() {
                 onSetPersistReaderSettingsChanges = viewModel::setPersistReaderSettingsChanges,
             )
         }
+        LaunchedEffect(state.menuVisible) {
+            if (!state.menuVisible) activeComicPanel.value = ComicBottomPanel.NONE
+        }
+        BackHandler(
+            enabled = activeComicPanel.value != ComicBottomPanel.NONE || activeEpubPanel.value != EpubBottomPanel.NONE,
+        ) {
+            activeComicPanel.value = ComicBottomPanel.NONE
+            activeEpubPanel.value = EpubBottomPanel.NONE
+        }
 
         Box(modifier = Modifier.fillMaxSize()) {
+            ContentOverlay(state = state)
+
             if (!state.menuVisible && showPageNumber) {
-                ReaderPageIndicator(
+                ReaderStatusIndicator(
+                    chapterTitle = state.currentChapter?.chapter?.name,
                     currentPage = state.visiblePageEnd.takeIf { it > 0 } ?: state.currentPage,
                     totalPages = state.totalPages,
                     visiblePageStart = state.visiblePageStart,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding(),
+                    showStatus = showPageNumber,
+                    showChapterTitle = showReaderChapterTitle,
+                    showClock = showReaderClock,
+                    showBattery = showReaderBattery,
+                    position = readerStatusPosition,
                 )
             }
 
-            ContentOverlay(state = state)
+            ReaderBufferingIndicator(buffering = buffering, enabled = showBufferingSpeed)
 
             AppBars(
                 state = state,
+                settingsScreenModel = settingsScreenModel,
+                activeComicPanel = activeComicPanel.value,
+                onComicPanelChange = { activeComicPanel.value = it },
                 activeEpubPanel = activeEpubPanel.value,
                 onEpubPanelChange = { activeEpubPanel.value = it },
             )
@@ -543,26 +574,6 @@ class ReaderActivity : BaseActivity() {
                         }
                     },
                 )
-            }
-            is ReaderViewModel.Dialog.Settings -> {
-                if (useEpubSettings) {
-                    EpubReaderSettingsSheet(
-                        preferences = epubLayoutPreferences,
-                        readerPreferences = readerPreferences,
-                        epubReaderPreferences = epubReaderPreferences,
-                        onDismissRequest = {
-                            onDismissRequest()
-                            setMenuVisibility(true)
-                        },
-                    )
-                } else {
-                    ReaderSettingsDialog(
-                        onDismissRequest = onDismissRequest,
-                        onShowMenus = { setMenuVisibility(true) },
-                        onHideMenus = { setMenuVisibility(false) },
-                        screenModel = settingsScreenModel,
-                    )
-                }
             }
             is ReaderViewModel.Dialog.ReadingModeSelect -> {
                 ReadingModeSelectDialog(
@@ -645,6 +656,10 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
+        if (configStartupDeferred) {
+            super.onDestroy()
+            return
+        }
         val startedAt = SystemClock.uptimeMillis()
         try {
             try {
@@ -688,6 +703,10 @@ class ReaderActivity : BaseActivity() {
     }
 
     override fun onPause() {
+        if (configStartupDeferred) {
+            super.onPause()
+            return
+        }
         lifecycleScope.launchNonCancellable {
             try {
                 viewModel.updateHistory()
@@ -705,7 +724,13 @@ class ReaderActivity : BaseActivity() {
      * Helps with rotations.
      */
     override fun onResume() {
+        if (configStartupDeferred) {
+            super.onResume()
+            if (configRedirected) return
+            return
+        }
         super.onResume()
+        if (configRedirected) return
         viewModel.restartReadTimer()
         setMenuVisibility(viewModel.state.value.menuVisible)
     }
@@ -716,6 +741,7 @@ class ReaderActivity : BaseActivity() {
      */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (configRedirected) return
         if (hasFocus) {
             setMenuVisibility(viewModel.state.value.menuVisible)
         }
@@ -809,6 +835,9 @@ class ReaderActivity : BaseActivity() {
     @Composable
     private fun AppBars(
         state: ReaderViewModel.State,
+        settingsScreenModel: ReaderSettingsScreenModel,
+        activeComicPanel: ComicBottomPanel,
+        onComicPanelChange: (ComicBottomPanel) -> Unit,
         activeEpubPanel: EpubBottomPanel,
         onEpubPanelChange: (EpubBottomPanel) -> Unit,
     ) {
@@ -831,6 +860,11 @@ class ReaderActivity : BaseActivity() {
         val cropBorderWebtoon by readerPreferences.cropBordersWebtoon.collectAsState()
         val isPagerType = ReadingMode.isPagerType(effectiveReadingModePreference())
         val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
+        val toolbarActionValue by readerPreferences.comicToolbarActions.collectAsState()
+        val toolbarActions = remember(toolbarActionValue) { ReaderToolbarActions.comic(toolbarActionValue) }
+        val pageLayoutValue by readerPreferences.pageLayout.collectAsState()
+        val shiftDoublePages by readerPreferences.shiftDoublePages.collectAsState()
+        val usesDoublePages = isPagerType && PageLayout.fromPreference(pageLayoutValue).usesDoublePages
 
         val verticalNavigatorForLongStrip by readerPreferences.verticalNavigatorForLongStrip.collectAsState()
         val verticalNavigatorOnLeft by readerPreferences.verticalNavigatorOnLeft.collectAsState()
@@ -884,11 +918,8 @@ class ReaderActivity : BaseActivity() {
             readingMode = ReadingMode.fromPreference(
                 effectiveReadingModePreference(),
             ),
-            onClickReadingMode = if (useEpubSettings) {
-                viewModel::openSettingsDialog
-            } else {
-                viewModel::openReadingModeSelectDialog
-            },
+            toolbarActions = toolbarActions,
+            onClickReadingMode = viewModel::openReadingModeSelectDialog,
             orientation = ReaderOrientation.fromPreference(
                 viewModel.getMangaOrientation(resolveDefault = false),
             ),
@@ -899,7 +930,33 @@ class ReaderActivity : BaseActivity() {
                 menuToggleToast?.cancel()
                 menuToggleToast = toast(if (enabled) MR.strings.on else MR.strings.off)
             },
-            onClickSettings = viewModel::openSettingsDialog,
+            doublePages = usesDoublePages,
+            supportsPageLayout = isPagerType,
+            shiftDoublePages = shiftDoublePages,
+            activePanel = activeComicPanel,
+            settingsContent = {
+                ComicReaderSettingsContent(screenModel = settingsScreenModel)
+            },
+            onClickBrightness = { onComicPanelChange(ComicBottomPanel.SETTINGS) },
+            onClickBackground = { onComicPanelChange(ComicBottomPanel.SETTINGS) },
+            onClickPageLayout = {
+                val entries = PageLayout.selectableEntries
+                val current = PageLayout.fromPreference(readerPreferences.pageLayout.get())
+                readerPreferences.pageLayout.set(entries[(entries.indexOf(current) + 1) % entries.size].value)
+            },
+            onClickShiftDoublePages = {
+                readerPreferences.shiftDoublePages.set(!readerPreferences.shiftDoublePages.get())
+            },
+            onClickBookmark = viewModel::toggleChapterBookmark,
+            onClickSettings = {
+                onComicPanelChange(
+                    if (activeComicPanel == ComicBottomPanel.SETTINGS) {
+                        ComicBottomPanel.NONE
+                    } else {
+                        ComicBottomPanel.SETTINGS
+                    },
+                )
+            },
         )
     }
 
@@ -913,6 +970,8 @@ class ReaderActivity : BaseActivity() {
             .collectAsState(epubLayoutPreferences.readingMode.get())
         val currentPageDirection by epubLayoutPreferences.pageDirection.changes()
             .collectAsState(epubLayoutPreferences.pageDirection.get())
+        val toolbarActionValue by readerPreferences.epubToolbarActions.collectAsState()
+        val toolbarActions = remember(toolbarActionValue) { ReaderToolbarActions.epub(toolbarActionValue) }
         val totalPages = state.totalPages.coerceAtLeast(1)
         val currentPage = state.currentPage.coerceIn(1, totalPages)
         val progression = if (totalPages <= 1) {
@@ -1005,6 +1064,7 @@ class ReaderActivity : BaseActivity() {
                     onPanelChange(EpubBottomPanel.NONE)
                     openMangaScreen()
                 },
+                toolbarActions = toolbarActions,
                 onToggleNightMode = {
                     val target = if (epubLayoutPreferences.theme.get() == EpubLayoutPreferences.Theme.DARK) {
                         EpubLayoutPreferences.Theme.LIGHT
@@ -1013,6 +1073,11 @@ class ReaderActivity : BaseActivity() {
                     }
                     epubLayoutPreferences.theme.set(target)
                 },
+                onOpenFont = null,
+                onOpenBrightness = { onPanelChange(EpubBottomPanel.SETTINGS) },
+                onSearch = null,
+                onToggleTts = null,
+                onToggleOrientation = viewModel::openOrientationModeSelectDialog,
                 onToggleSettings = {
                     onPanelChange(
                         if (activePanel == EpubBottomPanel.SETTINGS) {
@@ -1515,13 +1580,17 @@ class ReaderActivity : BaseActivity() {
          * Initializes the reader subscriptions.
          */
         init {
-            readerPreferences.readerTheme.changes()
-                .onEach { theme ->
+            combine(
+                readerPreferences.readerTheme.changes(),
+                readerPreferences.readerCustomBackgroundColor.changes(),
+            ) { theme, customColor -> theme to customColor }
+                .onEach { (theme, customColor) ->
                     binding.readerContainer.setBackgroundColor(
                         when (theme) {
                             0 -> Color.WHITE
                             2 -> grayBackgroundColor
                             3 -> automaticBackgroundColor()
+                            ReaderPreferences.CUSTOM_BACKGROUND_THEME -> customColor
                             else -> Color.BLACK
                         },
                     )

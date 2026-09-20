@@ -49,7 +49,7 @@ class KomgaLibraryClassificationManagerTest {
     }
 
     @Test
-    fun `classification mode switches local configuration atomically`() {
+    fun `classification does not change shared configuration`() {
         val fixture = fixture()
         assertFalse(fixture.manager.enabled.get())
         assertEquals(LocalConfigMode.Shared, fixture.serverPreferences.localConfigMode.get())
@@ -57,9 +57,9 @@ class KomgaLibraryClassificationManagerTest {
         fixture.manager.enableClassification()
 
         assertTrue(fixture.manager.enabled.get())
-        assertEquals(LocalConfigMode.Separate, fixture.serverPreferences.localConfigMode.get())
+        assertEquals(LocalConfigMode.Shared, fixture.serverPreferences.localConfigMode.get())
 
-        fixture.manager.disableClassificationAndUseSharedConfig()
+        fixture.manager.disableClassification()
 
         assertFalse(fixture.manager.enabled.get())
         assertEquals(LocalConfigMode.Shared, fixture.serverPreferences.localConfigMode.get())
@@ -76,15 +76,8 @@ class KomgaLibraryClassificationManagerTest {
         }
         val connectionPreferences = ConnectionPreferences(store, json)
         val serverPreferences = KomgaServerPreferences(context, store, json, connectionPreferences)
-        val localConfigManager = KomgaLocalConfigManager(
-            preferenceStore = store,
-            connectionPreferences = connectionPreferences,
-            scopedPreferenceKeys = emptySet(),
-        )
         val manager = KomgaLibraryClassificationManager(
             preferenceStore = store,
-            serverPreferences = serverPreferences,
-            localConfigManager = localConfigManager,
             json = json,
         )
         return Fixture(manager, serverPreferences)

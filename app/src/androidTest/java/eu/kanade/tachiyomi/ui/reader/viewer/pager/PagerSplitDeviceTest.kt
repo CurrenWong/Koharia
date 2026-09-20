@@ -18,8 +18,8 @@ import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import koharia.connection.ConnectionPreferences
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.connection.LibraryConnectionProfile
+import koharia.connection.SharedAppPreferences
 import koharia.domain.manga.model.toDomainManga
 import koharia.importing.IncomingMediaSessionLocator
 import kotlinx.coroutines.Dispatchers
@@ -61,7 +61,7 @@ class PagerSplitDeviceTest {
         val previousProfiles = connections.getProfiles()
         val previousActiveConnection = connections.activeConnectionId.get()
         val sourceId = connections.allocateConnectionId()
-        val preferences = Injekt.get<ConnectionScopedPreferenceStoreFactory>().readerPreferences(sourceId)
+        val preferences = Injekt.get<SharedAppPreferences>().readerPreferences()
         val restores = mutableListOf<() -> Unit>()
         fun <T> override(preference: Preference<T>, value: T) {
             val wasSet = preference.isSet()

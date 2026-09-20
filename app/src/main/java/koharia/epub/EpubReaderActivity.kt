@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
@@ -76,6 +75,7 @@ import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.SearchToolbar
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.ReaderContentOverlay
+import eu.kanade.presentation.reader.ReaderStatusIndicator
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -83,6 +83,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderNavigationOverlayView
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderToolbarActions
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnCause
 import eu.kanade.tachiyomi.ui.reader.transition.PageTurnOrigin
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
@@ -91,7 +92,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.epub.font.EpubFontId
 import koharia.epub.font.EpubFontManager
 import koharia.epub.service.EpubReaderSupportResolution
@@ -187,23 +188,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     private val viewModel by viewModels<EpubReaderViewModel>()
-    private val scopedPreferenceStoreFactory = Injekt.get<ConnectionScopedPreferenceStoreFactory>()
+    private val sharedAppPreferences = Injekt.get<SharedAppPreferences>()
     private val sessionRepository = Injekt.get<EpubReaderSessionRepository>()
     private val eInkPreferences = Injekt.get<EInkPreferences>()
     private val sourceId by lazy { intent.extras?.getLong("source", -1L) ?: -1L }
-    private val basePreferences by lazy {
-        sourceId
-            .takeIf { it > 0L }
-            ?.let(scopedPreferenceStoreFactory::basePreferences)
-            ?: Injekt.get<BasePreferences>()
-    }
-    private val persistentReaderSettingsStore: PreferenceStore by lazy {
-        if (sourceId > 0L) {
-            scopedPreferenceStoreFactory.storeForServer(sourceId)
-        } else {
-            Injekt.get<ScopedPreferenceStore>()
-        }
-    }
+    private val basePreferences by lazy { sharedAppPreferences.basePreferences() }
+    private val persistentReaderSettingsStore: PreferenceStore by lazy { sharedAppPreferences.store() }
     private val epubReaderPreferences by lazy {
         EpubReaderPreferences(persistentReaderSettingsStore)
     }
@@ -242,6 +232,13 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     private var lastTouchPositionTimeMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (needsSharedConfigSelection()) {
+            configStartupDeferred = true
+            super.onCreate(null)
+            redirectToSharedConfigSelection()
+            return
+        }
+
         registerSecureActivity(this)
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -281,6 +278,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             val scope = rememberCoroutineScope()
             var activePanel by rememberSaveable { mutableStateOf(EpubBottomPanel.NONE) }
             var showBookInfoDialog by rememberSaveable { mutableStateOf(false) }
+            var showFontPicker by rememberSaveable(state.chapterId) { mutableStateOf(false) }
             val currentTheme by epubLayoutPreferences.theme.changes().collectAsState(epubLayoutPreferences.theme.get())
             val currentCustomBackgroundColor by epubLayoutPreferences.customBackgroundColor.changes()
                 .collectAsState(epubLayoutPreferences.customBackgroundColor.get())
@@ -340,6 +338,17 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 .collectAsState(readerPreferences.drawUnderCutout.get())
             val showReadingProgress by readerPreferences.showPageNumber.changes()
                 .collectAsState(readerPreferences.showPageNumber.get())
+            val readerStatusPosition by readerPreferences.readerStatusPosition.changes()
+                .collectAsState(readerPreferences.readerStatusPosition.get())
+            val showReaderChapterTitle by readerPreferences.showReaderChapterTitle.changes()
+                .collectAsState(readerPreferences.showReaderChapterTitle.get())
+            val showReaderClock by readerPreferences.showReaderClock.changes()
+                .collectAsState(readerPreferences.showReaderClock.get())
+            val showReaderBattery by readerPreferences.showReaderBattery.changes()
+                .collectAsState(readerPreferences.showReaderBattery.get())
+            val toolbarActionValue by readerPreferences.epubToolbarActions.changes()
+                .collectAsState(readerPreferences.epubToolbarActions.get())
+            val toolbarActions = remember(toolbarActionValue) { ReaderToolbarActions.epub(toolbarActionValue) }
             val customBrightnessEnabled by readerPreferences.customBrightness.changes()
                 .collectAsState(readerPreferences.customBrightness.get())
             val customBrightnessValue by readerPreferences.customBrightnessValue.changes()
@@ -548,6 +557,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         if (drawerState.isOpen) drawerState.close() else drawerState.open()
                                     }
                                 },
+                                toolbarActions = toolbarActions,
                                 onToggleNightMode = {
                                     val target = if (currentTheme == EpubLayoutPreferences.Theme.DARK) {
                                         EpubLayoutPreferences.Theme.LIGHT
@@ -555,6 +565,27 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         EpubLayoutPreferences.Theme.DARK
                                     }
                                     epubLayoutPreferences.theme.set(target)
+                                },
+                                onOpenFont = if (supportsFontOverride()) {
+                                    {
+                                        epubReaderFragment()?.prepareFontSelection()
+                                        showFontPicker = true
+                                    }
+                                } else {
+                                    null
+                                },
+                                onOpenBrightness = {
+                                    activePanel = EpubBottomPanel.SETTINGS
+                                },
+                                onSearch = viewModel::openSearch,
+                                onToggleTts = null,
+                                onToggleOrientation = {
+                                    val orientations = ReaderOrientation.entries
+                                    val current = ReaderOrientation.fromPreference(
+                                        readerPreferences.defaultOrientationType.get(),
+                                    )
+                                    val next = orientations[(orientations.indexOf(current) + 1) % orientations.size]
+                                    readerPreferences.defaultOrientationType.set(next.flagValue)
                                 },
                                 onToggleSettings = {
                                     activePanel = if (activePanel == EpubBottomPanel.SETTINGS) {
@@ -667,12 +698,18 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                 )
 
                                 if (!state.menuVisible && showReadingProgress) {
-                                    EpubReadingProgressIndicator(
-                                        progressPercent = state.progressionPercent,
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .navigationBarsPadding()
-                                            .padding(bottom = 8.dp),
+                                    val visualPage = state.currentVisualPage
+                                    val visualTotal = state.totalVisualPages
+                                    ReaderStatusIndicator(
+                                        chapterTitle = state.currentSectionTitle ?: state.chapterTitle,
+                                        currentPage = visualPage ?: ((state.progressionPercent ?: 0) + 1),
+                                        totalPages = visualTotal ?: 101,
+                                        percentageOnly = visualPage == null || visualTotal == null,
+                                        showStatus = true,
+                                        showChapterTitle = showReaderChapterTitle,
+                                        showClock = showReaderClock,
+                                        showBattery = showReaderBattery,
+                                        position = readerStatusPosition,
                                     )
                                 }
 
@@ -809,6 +846,14 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 )
             }
 
+            if (showFontPicker) {
+                koharia.epub.settings.EpubFontPickerSheet(
+                    preferences = epubLayoutPreferences,
+                    manager = epubFontManager,
+                    onDismissRequest = { showFontPicker = false },
+                )
+            }
+
             if (showBookInfoDialog) {
                 EpubBookInfoDialog(
                     state = state,
@@ -904,6 +949,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onPause() {
+        if (configStartupDeferred) {
+            super.onPause()
+            return
+        }
         isReaderResumed = false
         paginationViewportJob?.cancel()
         paginationJob?.cancel()
@@ -919,7 +968,13 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onResume() {
+        if (configStartupDeferred) {
+            super.onResume()
+            if (configRedirected) return
+            return
+        }
         super.onResume()
+        if (configRedirected) return
         viewModel.restartReadTimer()
         isReaderResumed = true
         applyCurrentEpubBrightness()
@@ -933,6 +988,10 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onLowMemory() {
+        if (configStartupDeferred) {
+            super.onLowMemory()
+            return
+        }
         epubReaderFragment()?.stopPagination()
         lifecycleScope.launchNonCancellable { viewModel.saveCurrentProgress() }
         super.onLowMemory()
@@ -940,12 +999,17 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (configRedirected) return
         if (hasFocus) {
             updateSystemBars(viewModel.state.value.menuVisible)
         }
     }
 
     override fun onDestroy() {
+        if (configStartupDeferred) {
+            super.onDestroy()
+            return
+        }
         val releaseSession = isFinishing
         super.onDestroy()
         // FragmentActivity destroys the Readium navigator during super.onDestroy(). Closing the

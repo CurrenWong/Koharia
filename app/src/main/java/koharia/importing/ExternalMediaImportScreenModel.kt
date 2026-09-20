@@ -40,6 +40,7 @@ class ExternalMediaImportScreenModel(
     private val openManager: IncomingMediaOpenManager,
     private val localLibraryEntryOpenManager: LocalLibraryEntryOpenManager,
     private val restrictedConnectionId: Long? = null,
+    private val allowCrossConnectionForEpub: Boolean = false,
     private val preferredShelfId: String? = null,
     initialStep: Step = Step.ACTIONS,
     private val generatedComicPath: String? = null,
@@ -279,8 +280,10 @@ class ExternalMediaImportScreenModel(
 
     private suspend fun loadConnections(items: List<ConnectionMediaImportItem>): List<ImportConnection> {
         if (items.isEmpty() || items.any { LocalMediaFormats.isImage(it.extension) }) return emptyList()
+        val restrictConnection = restrictedConnectionId != null &&
+            !(allowCrossConnectionForEpub && items.all { it.extension.equals("epub", true) })
         return connectionPreferences.getProfiles()
-            .filter { restrictedConnectionId == null || it.id == restrictedConnectionId }
+            .filter { !restrictConnection || it.id == restrictedConnectionId }
             .mapNotNull { profile ->
                 val source = sourceManager.get(profile.id) ?: return@mapNotNull null
                 val adapter = source as? ConnectionMediaImportAdapter ?: return@mapNotNull null

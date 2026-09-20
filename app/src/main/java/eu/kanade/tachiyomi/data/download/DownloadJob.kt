@@ -57,6 +57,8 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
     }
 
     override suspend fun doWork(): Result {
+        if (uy.kohesive.injekt.Injekt.get<koharia.connection.SharedConfigMigration>().isPending()) return Result.retry()
+
         val requireWifi = downloadPreferences.downloadOnlyOverWifi.get()
         val initialNetworkState = applicationContext.activeNetworkState()
         var networkCheck = checkNetworkState(initialNetworkState, requireWifi)

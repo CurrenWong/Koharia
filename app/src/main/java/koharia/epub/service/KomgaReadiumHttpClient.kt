@@ -1,8 +1,8 @@
 package koharia.epub.service
 
+import koharia.connection.SharedAppPreferences
 import koharia.epub.cache.EpubCacheManager
 import koharia.epub.injectEpubParagraphIndentStyle
-import koharia.source.komga.KomgaScopedPreferenceStoreFactory
 import koharia.source.komga.KomgaSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class KomgaReadiumHttpClient(
     private val sourceManager: SourceManager = Injekt.get(),
-    private val scopedPreferenceStoreFactory: KomgaScopedPreferenceStoreFactory = Injekt.get(),
+    private val sharedAppPreferences: SharedAppPreferences = Injekt.get(),
     private val epubCacheManager: EpubCacheManager = Injekt.get(),
 ) {
 
@@ -49,7 +49,7 @@ class KomgaReadiumHttpClient(
         publicationKey: String = "source:$sourceId",
         persistCache: Boolean = true,
     ): HttpClient {
-        val cachedOnlyPreference = scopedPreferenceStoreFactory.basePreferences(sourceId).downloadedOnly
+        val cachedOnlyPreference = sharedAppPreferences.basePreferences().downloadedOnly
         // Keep one Readium transport per server so opening the pagination scanner or an adjacent
         // EPUB reuses the same connection pool and TLS session. Cache policy remains per reader
         // in the wrapper below.
@@ -65,7 +65,7 @@ class KomgaReadiumHttpClient(
         return ParagraphIndentNormalizingHttpClient(cachedClient) {
             !(
                 publisherStylesOverride
-                    ?: scopedPreferenceStoreFactory.epubLayoutPreferences(sourceId).publisherStyles.get()
+                    ?: sharedAppPreferences.epubLayoutPreferences().publisherStyles.get()
                 )
         }
     }

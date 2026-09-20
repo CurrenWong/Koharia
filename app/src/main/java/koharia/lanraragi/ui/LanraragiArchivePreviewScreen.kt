@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -63,8 +64,14 @@ import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.manga.components.MangaInfoBox
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.manga.notes.MangaNotesScreen
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.system.copyToClipboard
+import koharia.connection.ConnectionSource
+import koharia.epub.EpubReaderLauncher
 import koharia.source.lanraragi.LanraragiSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -84,7 +91,7 @@ import uy.kohesive.injekt.api.get
 class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourceId: Long) : Screen() {
     @Composable
     override fun Content() {
-        val source = Injekt.get<SourceManager>().get(sourceId) as? LanraragiSource
+        val source = Injekt.get<SourceManager>().get(sourceId) as? ConnectionSource
         if (source == null) {
             EmptyScreen(stringRes = MR.strings.connection_unavailable)
             return
@@ -115,6 +122,10 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
         )
         var cover by remember { mutableStateOf(false) }
         var opening by remember { mutableStateOf(false) }
+        val readerLauncher = remember { EpubReaderLauncher() }
+        LaunchedEffect(state.previewUnsupported) {
+            if (state.previewUnsupported) navigator.replace(MangaScreen(mangaId))
+        }
         fun open(page: Int?) {
             if (opening) return
             val manga = state.manga ?: return
@@ -122,10 +133,22 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
             scope.launch {
                 try {
                     val chapter = withContext(Dispatchers.IO) { model.currentChapter() }
-                    context.startActivity(model.opener.readerIntent(context, manga, chapter, page))
+                    val intent = if (page != null) {
+                        ReaderActivity.newIntent(
+                            context,
+                            manga.id,
+                            chapter.id,
+                            sourceId = manga.source,
+                            pageIndex = page,
+                            explicitPageSelection = true,
+                        )
+                    } else {
+                        readerLauncher.resolveIntent(context, manga.id, chapter.id)
+                    }
+                    context.startActivity(intent)
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
-                    snackbar.showSnackbar(context.lanraragiError(error))
+                    snackbar.showSnackbar(error.localizedMessage ?: context.getString(R.string.unknown_error))
                 } finally {
                     opening = false
                 }
@@ -140,8 +163,10 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
                     ).copy(alpha = backgroundAlpha),
                     navigateUp = { navigator.pop() },
                     actions = {
-                        IconButton(onClick = model::download, enabled = state.chapter != null) {
-                            Icon(Icons.Default.Download, stringResource(MR.strings.action_download))
+                        if (source is HttpSource) {
+                            IconButton(onClick = model::download, enabled = state.chapter != null) {
+                                Icon(Icons.Default.Download, stringResource(MR.strings.action_download))
+                            }
                         }
                         IconButton(onClick = { model.refresh() }, enabled = !state.loading) {
                             Icon(Icons.Default.Refresh, stringResource(MR.strings.lanraragi_refresh))
@@ -190,14 +215,20 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
                                 isStubSource = false,
                                 onCoverClick = { cover = true },
                                 doSearch = { query, _ ->
-                                    navigator.push(LanraragiLibraryScreen(sourceId, query, true))
+                                    if (source is LanraragiSource) {
+                                        navigator.push(LanraragiLibraryScreen(sourceId, query, true))
+                                    }
                                 },
                             )
                             ExpandableMangaDescription(
                                 description = manga.description,
                                 tagsProvider = { manga.genre },
                                 notes = manga.notes,
-                                onTagSearch = { navigator.push(LanraragiLibraryScreen(sourceId, it, true)) },
+                                onTagSearch = {
+                                    if (source is LanraragiSource) {
+                                        navigator.push(LanraragiLibraryScreen(sourceId, it, true))
+                                    }
+                                },
                                 onCopyTagToClipboard = { context.copyToClipboard(it, it) },
                                 onEditNotes = { navigator.push(MangaNotesScreen(manga)) },
                             )
@@ -209,7 +240,7 @@ class LanraragiArchivePreviewScreen(private val mangaId: Long, private val sourc
                         Text(stringResource(MR.strings.lanraragi_page_previews, state.pages.size))
                         if (state.loading) EInkLinearProgressIndicator(Modifier.fillMaxWidth())
                         state.error?.let {
-                            Text(context.lanraragiError(it))
+                            Text(it.localizedMessage ?: stringResource(MR.strings.unknown_error))
                             TextButton(onClick = { model.refresh() }) { Text(stringResource(MR.strings.action_retry)) }
                         }
                     }

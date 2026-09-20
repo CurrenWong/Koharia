@@ -113,8 +113,8 @@ class LanraragiOfficialDemoTest {
                 bitmap.recycle()
             }
             preferences.activeConnectionId.set(profile.id)
-            val readerPreferences = Injekt.get<koharia.connection.ConnectionScopedPreferenceStoreFactory>()
-                .readerPreferences(source.id)
+            val readerPreferences = Injekt.get<koharia.connection.SharedAppPreferences>()
+                .readerPreferences()
             val oldNewUserOverlay = readerPreferences.showNavigationOverlayNewUser.get()
             val oldStartupOverlay = readerPreferences.showNavigationOverlayOnStart.get()
             readerPreferences.showNavigationOverlayNewUser.set(false)

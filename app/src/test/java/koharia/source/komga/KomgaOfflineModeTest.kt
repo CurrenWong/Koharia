@@ -8,9 +8,15 @@ import org.junit.jupiter.api.Test
 class KomgaOfflineModeTest {
 
     @Test
-    fun `cached-only mode never permits Komga network access`() {
+    fun `cached-only mode blocks ordinary Komga network access`() {
         assertFalse(shouldUseKomgaNetwork(cachedOnly = true, isOnline = true))
         assertFalse(shouldUseKomgaNetwork(cachedOnly = true, isOnline = false))
+    }
+
+    @Test
+    fun `cached-only mode still permits progress sync while online`() {
+        assertTrue(shouldUseKomgaNetwork(cachedOnly = true, isOnline = true, progressSync = true))
+        assertFalse(shouldUseKomgaNetwork(cachedOnly = true, isOnline = false, progressSync = true))
     }
 
     @Test

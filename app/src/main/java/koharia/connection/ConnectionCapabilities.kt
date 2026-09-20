@@ -408,6 +408,11 @@ interface ConnectionReadStatusAdapter {
     suspend fun setChapterReadStatus(chapterUrl: String, read: Boolean)
 }
 
+/** Optional provider-specific chapter title selected for the details screen. */
+interface ConnectionChapterTitleAdapter {
+    fun detailsChapterTitle(chapterMemo: JsonObject): String?
+}
+
 interface ConnectionHistorySyncAdapter {
     suspend fun syncConnectionHistory()
 }

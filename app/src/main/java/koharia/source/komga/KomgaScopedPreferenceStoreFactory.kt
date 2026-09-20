@@ -1,3 +1,0 @@
-package koharia.source.komga
-
-typealias KomgaScopedPreferenceStoreFactory = koharia.connection.ConnectionScopedPreferenceStoreFactory

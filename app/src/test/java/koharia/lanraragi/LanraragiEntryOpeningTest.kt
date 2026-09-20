@@ -29,6 +29,10 @@ class LanraragiEntryOpeningTest {
             lanraragiEntryDestination(url, 42, LanraragiArchiveOpenMode.PAGE_PREVIEW),
         )
         assertEquals(
+            LanraragiEntryDestination.DETAILS,
+            lanraragiEntryDestination(url, 42, LanraragiArchiveOpenMode.DETAILS),
+        )
+        assertEquals(
             LanraragiEntryDestination.PAGE_PREVIEW,
             lanraragiEntryDestination(url, 42, LanraragiArchiveOpenMode.READER, longClick = true),
         )

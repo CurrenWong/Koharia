@@ -112,6 +112,7 @@ class LanraragiSettingsScreen(
         val modeOptions = mapOf(
             LanraragiArchiveOpenMode.READER to stringResource(MR.strings.lanraragi_open_reader),
             LanraragiArchiveOpenMode.PAGE_PREVIEW to stringResource(MR.strings.lanraragi_open_preview),
+            LanraragiArchiveOpenMode.DETAILS to stringResource(MR.strings.lanraragi_open_details),
         )
         fun discard() {
             scope.launch {

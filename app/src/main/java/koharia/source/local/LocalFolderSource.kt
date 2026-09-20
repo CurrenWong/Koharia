@@ -40,7 +40,6 @@ import koharia.connection.ConnectionMediaImportSeries
 import koharia.connection.ConnectionMediaType
 import koharia.connection.ConnectionMetadataAdapter
 import koharia.connection.ConnectionMetadataGenerationAdapter
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.connection.ConnectionSeriesCoverAdapter
 import koharia.connection.ConnectionSource
 import koharia.connection.LibraryConnectionProfile
@@ -48,6 +47,7 @@ import koharia.connection.LibraryContentScope
 import koharia.connection.LibraryMetadata
 import koharia.connection.LibraryMetadataSuggestion
 import koharia.connection.MetadataFilenameTemplate
+import koharia.connection.SharedAppPreferences
 import koharia.core.archive.archiveReader
 import koharia.core.archive.epubReader
 import koharia.document.DocumentEngines
@@ -139,7 +139,7 @@ class LocalFolderSource(
     private val getChaptersByMangaId: GetChaptersByMangaId by injectLazy()
     private val coverCache: CoverCache by injectLazy()
     private val documentLayoutPreferences by lazy {
-        Injekt.get<ConnectionScopedPreferenceStoreFactory>().epubLayoutPreferences(id)
+        Injekt.get<SharedAppPreferences>().epubLayoutPreferences()
     }
     private val refreshMutex = Mutex()
     private val mutableLibraryRefreshes = MutableSharedFlow<ConnectionLibraryRefreshResult>(
@@ -365,7 +365,7 @@ class LocalFolderSource(
                 valueTransform = LocalLibraryItem::format,
             )
 
-        mangas
+        val filtered = mangas
             .mapNotNull { manga ->
                 val location = LocalLibraryLocator.location(manga.url, id) ?: return@mapNotNull null
                 val rootId = location.rootId ?: return@mapNotNull null
@@ -401,9 +401,20 @@ class LocalFolderSource(
                     )
                 }
             }
-            .sortedWith { first, second ->
+        val sorted = when (filters.sort) {
+            // IDs preserve first insertion order, including entries indexed before sorting existed.
+            1 -> filtered.sortedBy(Manga::id)
+            2 -> filtered.sortedBy { manga ->
+                val location = LocalLibraryLocator.location(manga.url, id)
+                location?.rootId?.let { rootId ->
+                    libraryItems[LocalLibraryLocator.itemKey(rootId, location.relativePath)]?.modifiedAt
+                } ?: 0L
+            }
+            else -> filtered.sortedWith { first, second ->
                 first.title.compareToCaseInsensitiveNaturalOrder(second.title)
             }
+        }
+        if (filters.descending) sorted.reversed() else sorted
     }
 
     private suspend fun indexedMangaPage(
@@ -1924,7 +1935,7 @@ class LocalFolderSource(
             showSourceName = true,
             detailsRefreshIntervalMillis = null,
         )
-        private val COMIC_LIBRARY_EXTENSIONS = LocalMediaFormats.comicExtensions
+        private val COMIC_LIBRARY_EXTENSIONS = LocalMediaFormats.comicExtensions + LocalMediaFormats.epub.extensions
         private val BOOK_LIBRARY_EXTENSIONS = LocalMediaFormats.bookExtensions
         private val BOOK_FILE_EXTENSIONS = LocalMediaFormats.bookExtensions
         private val SUPPORTED_FILE_EXTENSIONS = LocalMediaFormats.allExtensions

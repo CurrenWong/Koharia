@@ -40,8 +40,6 @@ data class KomgaClassifiedLibrary(
 
 class KomgaLibraryClassificationManager(
     preferenceStore: PreferenceStore,
-    private val serverPreferences: KomgaServerPreferences,
-    private val localConfigManager: KomgaLocalConfigManager,
     private val json: Json,
 ) {
 
@@ -101,19 +99,11 @@ class KomgaLibraryClassificationManager(
     }
 
     fun enableClassification() {
-        if (serverPreferences.localConfigMode.get() != LocalConfigMode.Separate) {
-            localConfigManager.setConnectionConfigMode(LocalConfigMode.Separate)
-        }
         enabled.set(true)
     }
 
     fun disableClassification() {
         enabled.set(false)
-    }
-
-    fun disableClassificationAndUseSharedConfig() {
-        enabled.set(false)
-        localConfigManager.setConnectionConfigMode(LocalConfigMode.Shared)
     }
 
     fun clearServer(serverId: Long) {

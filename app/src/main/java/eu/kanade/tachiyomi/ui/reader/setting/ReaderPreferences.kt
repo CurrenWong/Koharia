@@ -51,6 +51,30 @@ class ReaderPreferences(
 
     val showPageNumber: Preference<Boolean> = preferenceStore.getBoolean("pref_show_page_number_key", false)
 
+    val readerStatusPosition: Preference<ReaderStatusPosition> = preferenceStore.getEnum(
+        "reader_status_position",
+        ReaderStatusPosition.BOTTOM,
+    )
+
+    val showReaderChapterTitle: Preference<Boolean> =
+        preferenceStore.getBoolean("reader_status_show_chapter", true)
+
+    val showReaderClock: Preference<Boolean> = preferenceStore.getBoolean("reader_status_show_clock", true)
+
+    val showReaderBattery: Preference<Boolean> = preferenceStore.getBoolean("reader_status_show_battery", true)
+
+    val showBufferingSpeed: Preference<Boolean> = preferenceStore.getBoolean("pref_show_buffering_speed", true)
+
+    val comicToolbarActions: Preference<String> = preferenceStore.getString(
+        "reader_comic_toolbar_actions",
+        ReaderToolbarActions.encode(ReaderToolbarActions.defaultComic),
+    )
+
+    val epubToolbarActions: Preference<String> = preferenceStore.getString(
+        "reader_epub_toolbar_actions",
+        ReaderToolbarActions.encodeEpub(ReaderToolbarActions.defaultEpub),
+    )
+
     val verticalNavigatorForLongStrip: Preference<Boolean> = preferenceStore.getBoolean(
         "pref_webtoon_vertical_navigator",
         true,
@@ -91,6 +115,11 @@ class ReaderPreferences(
     val zoomStart: Preference<Int> = preferenceStore.getInt("pref_zoom_start_key", 1)
 
     val readerTheme: Preference<Int> = preferenceStore.getInt("pref_reader_theme_key", 1)
+
+    val readerCustomBackgroundColor: Preference<Int> =
+        preferenceStore.getInt("reader_custom_background_color", DEFAULT_READER_BACKGROUND_COLOR)
+
+    val readerBackgroundColors: Preference<String> = preferenceStore.getString("reader_background_colors", "")
 
     val alwaysShowChapterTransition: Preference<Boolean> = preferenceStore.getBoolean(
         "always_show_chapter_transition",
@@ -235,6 +264,9 @@ class ReaderPreferences(
     }
 
     companion object {
+        const val CUSTOM_BACKGROUND_THEME = 4
+        val DEFAULT_READER_BACKGROUND_COLOR = 0xFF000000.toInt()
+        val LEGACY_GRAY_BACKGROUND_COLOR = 0xFF202125.toInt()
         const val WEBTOON_PADDING_MIN = 0
         const val WEBTOON_PADDING_MAX = 25
 
@@ -292,6 +324,8 @@ class ReaderPreferences(
         }
     }
 }
+
+enum class ReaderStatusPosition { TOP, BOTTOM }
 
 private fun <T, R> Preference<T>.migrateFrom(
     legacy: Preference<R>,

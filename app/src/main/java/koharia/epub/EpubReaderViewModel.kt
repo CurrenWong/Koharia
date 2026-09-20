@@ -18,9 +18,9 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionPublicationMetadata
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
 import koharia.connection.ConnectionSource
 import koharia.connection.RemoteEpubProgression
+import koharia.connection.SharedAppPreferences
 import koharia.connection.isConnectionLibraryEntry
 import koharia.domain.epub.interactor.AddEpubBookmark
 import koharia.domain.epub.interactor.DeleteEpubBookmark
@@ -137,13 +137,13 @@ class EpubReaderViewModel @JvmOverloads constructor(
     private val imageSaver: ImageSaver = Injekt.get(),
     globalEpubReaderPreferences: EpubReaderPreferences = Injekt.get(),
     globalBasePreferences: BasePreferences = Injekt.get(),
-    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get(),
+    private val sharedAppPreferences: SharedAppPreferences = Injekt.get(),
 ) : ViewModel() {
 
     private var epubReaderPreferences: EpubReaderPreferences =
-        scopedPreferenceStoreFactory.epubReaderPreferencesForSavedSource(savedState) ?: globalEpubReaderPreferences
+        globalEpubReaderPreferences
     private var basePreferences: BasePreferences =
-        scopedPreferenceStoreFactory.basePreferencesForSavedSource(savedState) ?: globalBasePreferences
+        globalBasePreferences
     private var transientReaderSettingsStore: PreferenceStore? = null
     private var publisherStylesOverride: Boolean? = null
     private var sessionReleaseScheduled = false
@@ -373,7 +373,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
                         source,
                         manga,
                         chapter,
-                        scopedPreferenceStoreFactory.basePreferences(source.id).incognitoMode.get(),
+                        sharedAppPreferences.basePreferences().incognitoMode.get(),
                         savedState.get<Int>("pdf_reflow_initial_page") ?: chapter.lastPageRead.toInt(),
                     )
                     savedState["pdf_reflow_revision"] = checkNotNull(pdfReflowArtifact).manifest.revision
@@ -385,8 +385,8 @@ class EpubReaderViewModel @JvmOverloads constructor(
 
                 currentEpubProgressAdapter =
                     (source as? ConnectionEpubProgressAdapter).takeIf { pdfReflowArtifact == null }
-                epubReaderPreferences = scopedPreferenceStoreFactory.epubReaderPreferences(source.id)
-                basePreferences = scopedPreferenceStoreFactory.basePreferences(source.id)
+                epubReaderPreferences = sharedAppPreferences.epubReaderPreferences()
+                basePreferences = sharedAppPreferences.basePreferences()
                 incognitoSession = basePreferences.incognitoMode.get()
                 currentChapterUrl = chapter.url
                 currentChapterRead = chapter.read

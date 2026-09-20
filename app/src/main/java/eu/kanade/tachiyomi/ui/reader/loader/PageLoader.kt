@@ -3,12 +3,15 @@ package eu.kanade.tachiyomi.ui.reader.loader
 import androidx.annotation.CallSuper
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * A loader used to load pages into the reader. Any open resources must be cleaned up when the
  * method [recycle] is called.
  */
 abstract class PageLoader {
+
+    open val bufferingState: StateFlow<ReaderBufferingState> = EmptyReaderBufferingState
 
     /**
      * Whether this loader has been already recycled.

@@ -48,46 +48,41 @@ object SettingsAdvancedScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
-        val scope = rememberCoroutineScope()
-        val context = LocalContext.current
-        val navigator = LocalNavigator.currentOrThrow
-
         val basePreferences = remember { Injekt.get<BasePreferences>() }
         val networkPreferences = remember { Injekt.get<NetworkPreferences>() }
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
 
         return listOf(
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_dump_crash_logs),
-                subtitle = stringResource(MR.strings.pref_dump_crash_logs_summary),
-                onClick = {
-                    scope.launch {
-                        CrashLogUtil(context).dumpLogs()
-                    }
-                },
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_debug_info),
-                onClick = { navigator.push(DebugInfoScreen()) },
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_onboarding_guide),
-                onClick = { navigator.push(OnboardingScreen()) },
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_manage_notifications),
-                onClick = {
-                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                    }
-                    context.startActivity(intent)
-                },
-            ),
+            getAppGroup(),
             getBackgroundActivityGroup(),
+            getDiagnosticsGroup(networkPreferences),
             getDataGroup(),
-            getNetworkGroup(networkPreferences = networkPreferences),
             getLibraryGroup(libraryPreferences = libraryPreferences),
             getReaderGroup(basePreferences = basePreferences),
+        )
+    }
+
+    @Composable
+    private fun getAppGroup(): Preference.PreferenceGroup {
+        val context = LocalContext.current
+        val navigator = LocalNavigator.currentOrThrow
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_advanced_app),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_onboarding_guide),
+                    onClick = { navigator.push(OnboardingScreen()) },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_manage_notifications),
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                        context.startActivity(intent)
+                    },
+                ),
+            ),
         )
     }
 
@@ -136,7 +131,7 @@ object SettingsAdvancedScreen : SearchableSettings {
         val navigator = LocalNavigator.currentOrThrow
 
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.label_data),
+            title = stringResource(MR.strings.pref_advanced_maintenance),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.pref_invalidate_download_cache),
@@ -156,14 +151,25 @@ object SettingsAdvancedScreen : SearchableSettings {
     }
 
     @Composable
-    private fun getNetworkGroup(
+    private fun getDiagnosticsGroup(
         networkPreferences: NetworkPreferences,
     ): Preference.PreferenceGroup {
         val context = LocalContext.current
+        val navigator = LocalNavigator.currentOrThrow
+        val scope = rememberCoroutineScope()
 
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.label_network),
+            title = stringResource(MR.strings.pref_advanced_diagnostics),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_dump_crash_logs),
+                    subtitle = stringResource(MR.strings.pref_dump_crash_logs_summary),
+                    onClick = { scope.launch { CrashLogUtil(context).dumpLogs() } },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_debug_info),
+                    onClick = { navigator.push(DebugInfoScreen()) },
+                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = networkPreferences.verboseLogging,
                     title = stringResource(MR.strings.pref_verbose_logging),
@@ -185,7 +191,7 @@ object SettingsAdvancedScreen : SearchableSettings {
         val context = LocalContext.current
 
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.label_library),
+            title = stringResource(MR.strings.pref_advanced_library_maintenance),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.pref_refresh_library_covers),
@@ -237,7 +243,7 @@ object SettingsAdvancedScreen : SearchableSettings {
             }
         }
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.pref_category_reader),
+            title = stringResource(MR.strings.pref_advanced_rendering),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.ListPreference(
                     preference = basePreferences.hardwareBitmapThreshold,

@@ -16,7 +16,6 @@ class ConnectionProfileManager(
         )
         require(profile.name.isNotEmpty()) { "Connection name cannot be empty" }
         preferences.setProfiles(preferences.getProfiles() + profile)
-        configManager.initializeScopeForNewConnection(profile.id)
         return profile
     }
 

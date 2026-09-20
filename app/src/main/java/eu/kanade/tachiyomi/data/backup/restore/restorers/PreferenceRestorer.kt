@@ -35,6 +35,16 @@ class PreferenceRestorer(
     private val komgaConnectionMigration: KomgaConnectionMigration = Injekt.get(),
     private val connectionPreferences: ConnectionPreferences = Injekt.get(),
 ) {
+    private val sharedConfigMigration = Injekt.get<koharia.connection.SharedConfigMigration>()
+    private var restoredSeparateConfig = false
+
+    fun finishRestore() {
+        check(sharedConfigMigration.finishRestore(restoredSeparateConfig)) { "Could not stage shared settings" }
+        if (!sharedConfigMigration.isPending()) {
+            LibraryUpdateJob.setupTask(context)
+            BackupCreateJob.setupTask(context)
+        }
+    }
     private val connectionRestorePolicy = ConnectionBackupRestorePolicy(
         genericKeyPrefix = CONNECTION_KEY_PREFIX,
         legacyAppKeys = LEGACY_CONNECTION_KEYS,
@@ -45,8 +55,23 @@ class PreferenceRestorer(
         preferences: List<BackupPreference>,
         backupCategories: List<BackupCategory>?,
     ) {
+        check(sharedConfigMigration.beginRestore()) { "Could not prepare settings restore" }
+        restoredSeparateConfig = koharia.connection.SharedConfigMigration.legacySeparate(
+            preferences.associate { it.key to (it.value as? StringPreferenceValue)?.value },
+        )
+        val normalized = preferences.sortedBy { it.key.startsWith("connection_shared::") }
+            .flatMap { entry ->
+                val key = sharedConfigMigration.restoreKey(entry.key, restoredSeparateConfig)
+                    ?: return@flatMap emptyList()
+                val result = mutableListOf(entry.copy(key = key))
+                val originalKey = koharia.connection.SharedConfigMigration.normalizeKey(entry.key)
+                if (restoredSeparateConfig && originalKey in setOf("connection_profiles", "connection_active_id")) {
+                    result += entry
+                }
+                result
+            }
         restorePreferences(
-            preferences,
+            normalized,
             preferenceStore,
             backupCategories,
         )
@@ -56,8 +81,7 @@ class PreferenceRestorer(
             komgaConnectionMigration.migrate()
         }
 
-        LibraryUpdateJob.setupTask(context)
-        BackupCreateJob.setupTask(context)
+        // Scheduling waits until all preferences and connection settings have been restored.
     }
 
     suspend fun restoreSource(preferences: List<BackupSourcePreferences>) {

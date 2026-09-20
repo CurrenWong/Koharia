@@ -112,6 +112,7 @@ class BackupRestorer(
                 }
                 // TODO: optionally trigger online library + tracker update
             }
+            if (options.appSettings) preferenceRestorer.finishRestore()
         }
     }
 

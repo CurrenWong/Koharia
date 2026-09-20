@@ -37,31 +37,6 @@ internal fun KomgaContentClassificationPreferenceGroup(): Preference.PreferenceG
     val hasServer = profiles.any { it.id == activeServerId }
     val comicCount = libraries.count { it.kind == KomgaLibraryKind.COMIC }
     val bookCount = libraries.count { it.kind == KomgaLibraryKind.BOOK }
-    var showEnableConfirmation by remember { mutableStateOf(false) }
-
-    if (showEnableConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showEnableConfirmation = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        manager.enableClassification()
-                        showEnableConfirmation = false
-                    },
-                ) {
-                    Text(stringResource(MR.strings.action_ok))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEnableConfirmation = false }) {
-                    Text(stringResource(MR.strings.action_cancel))
-                }
-            },
-            title = { Text(stringResource(MR.strings.komga_library_classification_confirm_title)) },
-            text = { Text(stringResource(MR.strings.komga_library_classification_confirm_message)) },
-        )
-    }
-
     return Preference.PreferenceGroup(
         title = stringResource(MR.strings.komga_library_classification_group),
         preferenceItems = persistentListOf<Preference.PreferenceItem<out Any, out Any>>(
@@ -81,7 +56,7 @@ internal fun KomgaContentClassificationPreferenceGroup(): Preference.PreferenceG
                     enabled = hasServer,
                     onCheckedChanged = { checked ->
                         if (checked) {
-                            showEnableConfirmation = true
+                            manager.enableClassification()
                         } else {
                             manager.disableClassification()
                         }

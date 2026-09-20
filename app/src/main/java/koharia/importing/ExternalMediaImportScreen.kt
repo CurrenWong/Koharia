@@ -81,6 +81,7 @@ data class ExternalMediaImportScreen(
     private val openImmediately: Boolean = false,
     private val skipActionSelection: Boolean = startAtImportConfiguration || openImmediately,
     private val restrictedConnectionId: Long? = null,
+    private val allowCrossConnectionForEpub: Boolean = false,
     private val preferredShelfId: String? = null,
     private val returnToCallerAfterImport: Boolean = false,
     private val generatedComicPath: String? = null,
@@ -98,6 +99,7 @@ data class ExternalMediaImportScreen(
                 startAtImportConfiguration,
                 openImmediately,
                 restrictedConnectionId,
+                allowCrossConnectionForEpub,
                 preferredShelfId,
                 returnToCallerAfterImport,
                 generatedComicPath,
@@ -121,6 +123,7 @@ data class ExternalMediaImportScreen(
                     epubReaderLauncher = EpubReaderLauncher(),
                 ),
                 restrictedConnectionId = restrictedConnectionId,
+                allowCrossConnectionForEpub = allowCrossConnectionForEpub,
                 preferredShelfId = preferredShelfId,
                 generatedComicPath = generatedComicPath,
                 initialStep = when {

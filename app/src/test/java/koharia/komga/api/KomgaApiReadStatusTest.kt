@@ -1,5 +1,6 @@
 package koharia.komga.api
 
+import koharia.source.komga.isKomgaProgressSync
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -24,6 +25,7 @@ class KomgaApiReadStatusTest {
         )
 
         assertEquals("PATCH", request.method)
+        assertEquals(true, request.isKomgaProgressSync)
         assertEquals("/api/v1/books/book-1/read-progress", request.url.encodedPath)
         assertEquals(
             "{\"completed\":true}",
@@ -39,6 +41,7 @@ class KomgaApiReadStatusTest {
         )
 
         assertEquals("DELETE", request.method)
+        assertEquals(true, request.isKomgaProgressSync)
         assertEquals("/api/v1/books/book-1/read-progress", request.url.encodedPath)
         assertEquals(0L, request.body?.contentLength() ?: 0L)
     }

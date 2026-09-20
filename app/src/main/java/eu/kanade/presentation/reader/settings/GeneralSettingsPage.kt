@@ -22,13 +22,6 @@ import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 
-private val themes = listOf(
-    MR.strings.black_background to 1,
-    MR.strings.gray_background to 2,
-    MR.strings.white_background to 0,
-    MR.strings.automatic_background to 3,
-)
-
 private val flashColors = listOf(
     MR.strings.pref_flash_style_black to ReaderEInkPreferences.FlashColor.BLACK,
     MR.strings.pref_flash_style_white to ReaderEInkPreferences.FlashColor.WHITE,
@@ -38,8 +31,6 @@ private val flashColors = listOf(
 @Composable
 internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
     val viewer by screenModel.viewerFlow.collectAsState()
-    val readerTheme by screenModel.preferences.readerTheme.collectAsState()
-
     val flashPageState by screenModel.preferences.flashOnPageChange.collectAsState()
 
     val flashMillisPref = screenModel.preferences.flashDurationMillis
@@ -50,16 +41,6 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
 
     val flashColorPref = screenModel.preferences.flashColor
     val flashColor by flashColorPref.collectAsState()
-
-    SettingsChipRow(MR.strings.pref_reader_theme) {
-        themes.map { (labelRes, value) ->
-            FilterChip(
-                selected = readerTheme == value,
-                onClick = { screenModel.preferences.readerTheme.set(value) },
-                label = { Text(stringResource(labelRes)) },
-            )
-        }
-    }
 
     val persistReaderSettingsChanges by screenModel.persistReaderSettingsChanges.collectAsState()
     CheckboxItem(
@@ -73,6 +54,11 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
     CheckboxItem(
         label = stringResource(MR.strings.pref_show_page_number),
         pref = screenModel.preferences.showPageNumber,
+    )
+
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_show_buffering_speed),
+        pref = screenModel.preferences.showBufferingSpeed,
     )
 
     CheckboxItem(

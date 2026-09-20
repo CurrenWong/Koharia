@@ -161,41 +161,20 @@ class ConnectionArchitectureTest {
     }
 
     @Test
-    fun `shared and separate connection scopes remain provider neutral`() {
-        assertEquals(
-            "connection_shared::",
-            ConnectionPreferenceScopes.forConnection(ConnectionConfigMode.Shared, 42L).prefix,
-        )
-        assertTrue(
-            ConnectionPreferenceScopes.forConnection(ConnectionConfigMode.Shared, 42L).allowLegacyFallback,
-        )
-        assertEquals(
-            "connection_42::",
-            ConnectionPreferenceScopes.forConnection(ConnectionConfigMode.Separate, 42L).prefix,
-        )
-        assertFalse(
-            ConnectionPreferenceScopes.forConnection(ConnectionConfigMode.Separate, 42L).allowLegacyFallback,
-        )
-        assertEquals(
-            "connection_shared::",
-            ConnectionPreferenceScopes.forConnection(
-                ConnectionConfigMode.Separate,
-                NO_ACTIVE_CONNECTION,
-            ).prefix,
-        )
+    fun `all preferences use the fixed shared scope`() {
+        assertEquals("connection_shared::", SharedAppPreferenceScope.currentScope().prefix)
+        assertTrue(SharedAppPreferenceScope.currentScope().allowLegacyFallback)
     }
 
     @Test
-    fun `profile manager creates registered provider profile and initializes its scope`() {
+    fun `profile manager adds a connection without cloning settings`() {
         val store = MutableTestPreferenceStore()
         val preferences = ConnectionPreferences(store, json)
         val provider = mockk<ConnectionProvider> {
             every { id } returns "test-provider"
             every { displayName } returns "Test"
         }
-        val configManager = mockk<ConnectionConfigManager> {
-            every { initializeScopeForNewConnection(any()) } just runs
-        }
+        val configManager = mockk<ConnectionConfigManager>()
         val manager = ConnectionProfileManager(
             preferences = preferences,
             registry = ConnectionRegistry(listOf(provider)),
@@ -208,7 +187,7 @@ class ConnectionArchitectureTest {
         assertEquals("Home", profile.name)
         assertEquals(listOf(profile), preferences.getProfiles())
         assertEquals("test-provider", preferences.providerIdForSource(profile.id))
-        verify(exactly = 1) { configManager.initializeScopeForNewConnection(profile.id) }
+        assertFalse(store.getAll().keys.any { it.startsWith("connection_${profile.id}::") })
     }
 
     @Test
@@ -292,8 +271,7 @@ class ConnectionArchitectureTest {
 
     @Test
     fun `provider management extensions compose without registry special cases`() {
-        val preparedModes = mutableListOf<ConnectionConfigMode>()
-        val provider = object : ConnectionProvider, ConnectionManagementAdapter, ConnectionConfigModeInterceptor {
+        val provider = object : ConnectionProvider, ConnectionManagementAdapter {
             override val id = "managed-provider"
             override val displayName = "Managed"
 
@@ -301,32 +279,10 @@ class ConnectionArchitectureTest {
 
             @Composable
             override fun ConnectionManagementPreferences() = Unit
-
-            override fun warningForConfigMode(mode: ConnectionConfigMode): ConnectionConfigModeWarning? {
-                return if (mode == ConnectionConfigMode.Shared) {
-                    ConnectionConfigModeWarning(MR.strings.action_ok, MR.strings.action_cancel)
-                } else {
-                    null
-                }
-            }
-
-            override fun prepareConfigModeChange(mode: ConnectionConfigMode) {
-                preparedModes += mode
-            }
         }
         val registered = ConnectionRegistry(listOf(provider)).availableProviders()
         val managementAdapters = registered.filterIsInstance<ConnectionManagementAdapter>()
-        val interceptors = registered.filterIsInstance<ConnectionConfigModeInterceptor>()
-
         assertEquals(1, managementAdapters.size)
-        assertEquals(1, interceptors.size)
-        assertNull(interceptors.single().warningForConfigMode(ConnectionConfigMode.Separate))
-        assertEquals(
-            MR.strings.action_ok,
-            interceptors.single().warningForConfigMode(ConnectionConfigMode.Shared)?.title,
-        )
-        interceptors.forEach { it.prepareConfigModeChange(ConnectionConfigMode.Shared) }
-        assertEquals(listOf(ConnectionConfigMode.Shared), preparedModes)
     }
 
     @Test
@@ -571,7 +527,7 @@ private data class TestBrowseScreen(
     override suspend fun refresh() = Unit
 }
 
-private class MutableTestPreferenceStore(
+internal class MutableTestPreferenceStore(
     val values: MutableMap<String, Any> = mutableMapOf(),
 ) : PreferenceStore {
     override fun getString(key: String, defaultValue: String): Preference<String> =

@@ -17,10 +17,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Response
+import okhttp3.ResponseBody
+import okio.Buffer
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.buffer
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
@@ -46,6 +53,9 @@ internal class HttpPageLoader(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectionPageAdapter = source as? ConnectionPageAdapter
+    private val transferMeter = ReaderTransferMeter()
+
+    override val bufferingState: StateFlow<ReaderBufferingState> = transferMeter.state
 
     /** A priority queue whose concurrency is selected by the connection provider. */
     private val queue = PriorityBlockingQueue<PriorityPage>()
@@ -410,6 +420,7 @@ internal class HttpPageLoader(
 
     override fun recycle() {
         super.recycle()
+        transferMeter.reset()
         scope.cancel()
         synchronized(schedulerLock) {
             queue.clear()
@@ -478,7 +489,9 @@ internal class HttpPageLoader(
             }
             if (force || !imageInCache) {
                 page.status = Page.State.DownloadImage
-                val imageResponse = source.getImage(page)
+                val imageResponse = source.getImage(page).let { response ->
+                    if (isPrefetch) response else response.withTransferMeter(transferMeter)
+                }
                 val cacheWriteStartedAt = System.nanoTime()
                 chapterCache.putImageToCache(imageUrl, imageResponse)
                 if (BuildConfig.LANRARAGI_DIAGNOSTICS && connectionPageAdapter != null) {
@@ -506,6 +519,49 @@ internal class HttpPageLoader(
             page.status = Page.State.Error(e)
         }
     }
+}
+
+private fun Response.withTransferMeter(meter: ReaderTransferMeter): Response {
+    val originalBody = body
+    meter.begin()
+    val monitoredSource = object : ForwardingSource(originalBody.source()) {
+        private var ended = false
+
+        override fun read(sink: Buffer, byteCount: Long): Long {
+            return try {
+                super.read(sink, byteCount).also { read ->
+                    if (read > 0L) meter.record(read)
+                    if (read == -1L) finish()
+                }
+            } catch (error: Throwable) {
+                finish()
+                throw error
+            }
+        }
+
+        override fun close() {
+            try {
+                super.close()
+            } finally {
+                finish()
+            }
+        }
+
+        private fun finish() {
+            if (ended) return
+            ended = true
+            meter.end()
+        }
+    }.buffer()
+    return newBuilder()
+        .body(
+            object : ResponseBody() {
+                override fun contentType() = originalBody.contentType()
+                override fun contentLength() = originalBody.contentLength()
+                override fun source(): BufferedSource = monitoredSource
+            },
+        )
+        .build()
 }
 
 private data class ActivePageLoad(

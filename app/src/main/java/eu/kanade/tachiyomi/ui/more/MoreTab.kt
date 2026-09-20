@@ -75,11 +75,6 @@ data object MoreTab : Tab {
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
         val user by screenModel.user.collectAsState()
-        val scopedSettingsBlockedReason = if (screenModel.scopedSettingsEnabled) {
-            null
-        } else {
-            stringResource(MR.strings.komga_scoped_settings_disabled_summary)
-        }
         LaunchedEffect(Unit) {
             screenModel.refreshUser()
         }
@@ -87,9 +82,9 @@ data object MoreTab : Tab {
             user = user,
             downloadQueueStateProvider = { downloadQueueState },
             downloadedOnly = screenModel.downloadedOnly,
-            downloadedOnlyEnabled = screenModel.scopedSettingsEnabled,
-            settingsEnabled = screenModel.scopedSettingsEnabled,
-            scopedSettingsBlockedReason = scopedSettingsBlockedReason,
+            downloadedOnlyEnabled = true,
+            settingsEnabled = true,
+            scopedSettingsBlockedReason = null,
             onDownloadedOnlyChange = { screenModel.downloadedOnly = it },
             onClickDownloadQueue = { navigator.push(DownloadQueueScreen) },
             onClickStats = { navigator.push(StatsScreen()) },
@@ -114,11 +109,9 @@ internal class MoreScreenModel(
 
     private val sourceManager: tachiyomi.domain.source.service.SourceManager = Injekt.get()
     private val connectionPreferences: ConnectionPreferences = Injekt.get()
-    private val localConfigManager: ConnectionConfigManager = Injekt.get()
     private val _user = MutableStateFlow<ConnectionAccount?>(null)
     private var refreshUserJob: Job? = null
     val user: StateFlow<ConnectionAccount?> = _user.asStateFlow()
-    var scopedSettingsEnabled by mutableStateOf(localConfigManager.canEditScopedPreferences())
 
     init {
         // Handle running/paused status change and queue progress updating
@@ -135,12 +128,6 @@ internal class MoreScreenModel(
                         else -> DownloadQueueState.Downloading(downloadQueueSize)
                     }
                 }
-        }
-
-        screenModelScope.launchIO {
-            localConfigManager.canEditScopedPreferences.collectLatest { canEdit ->
-                scopedSettingsEnabled = canEdit
-            }
         }
 
         screenModelScope.launchIO {

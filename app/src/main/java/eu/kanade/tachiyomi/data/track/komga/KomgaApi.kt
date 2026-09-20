@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import koharia.source.komga.KomgaServerPreferences
 import koharia.source.komga.KomgaSource
+import koharia.source.komga.komgaProgressSync
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
@@ -61,7 +62,10 @@ class KomgaApi(
 
                 val progress = source.client
                     .newCall(
-                        GET("${url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi", headers),
+                        GET("${url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi", headers)
+                            .newBuilder()
+                            .komgaProgressSync()
+                            .build(),
                     )
                     .awaitSuccess().let {
                         with(json) {
@@ -102,6 +106,7 @@ class KomgaApi(
                 .url("${track.tracking_url.replace("/api/v1/series/", "/api/v2/series/")}/read-progress/tachiyomi")
                 .headers(source.currentHeaders())
                 .put(payload.toRequestBody("application/json".toMediaType()))
+                .komgaProgressSync()
                 .build(),
         )
             .awaitSuccess()
@@ -145,6 +150,7 @@ class KomgaApi(
                 val request = GET(bookUrl, source.currentHeaders())
                     .newBuilder()
                     .cacheControl(CacheControl.FORCE_NETWORK)
+                    .komgaProgressSync()
                     .build()
                 val book = source.client.newCall(request)
                     .awaitSuccess()
@@ -205,6 +211,7 @@ class KomgaApi(
                                     source.currentHeaders(),
                                 ).newBuilder()
                                     .cacheControl(CacheControl.FORCE_NETWORK)
+                                    .komgaProgressSync()
                                     .build(),
                             )
                             .awaitSuccess()
@@ -283,6 +290,7 @@ class KomgaApi(
                 .url("$bookUrl/read-progress")
                 .headers(source.currentHeaders())
                 .patch(payload.toRequestBody("application/json".toMediaType()))
+                .komgaProgressSync()
                 .build(),
         ).awaitSuccess()
         invalidateProgressCache(source.id)

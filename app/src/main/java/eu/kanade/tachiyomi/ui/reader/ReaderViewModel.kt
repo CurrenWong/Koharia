@@ -47,7 +47,7 @@ import koharia.connection.ConnectionEpubProgressAdapter
 import koharia.connection.ConnectionPageProgressAdapter
 import koharia.connection.ConnectionPublicationAdapter
 import koharia.connection.ConnectionRawDownloadAdapter
-import koharia.connection.ConnectionScopedPreferenceStoreFactory
+import koharia.connection.SharedAppPreferences
 import koharia.connection.isConnectionLibraryEntry
 import koharia.document.DocumentRenderSettings
 import koharia.domain.epub.interactor.GetEpubProgress
@@ -126,14 +126,14 @@ class ReaderViewModel @JvmOverloads constructor(
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
     globalLibraryPreferences: LibraryPreferences = Injekt.get(),
     private val getEpubProgress: GetEpubProgress = Injekt.get(),
-    private val scopedPreferenceStoreFactory: ConnectionScopedPreferenceStoreFactory = Injekt.get(),
+    private val sharedAppPreferences: SharedAppPreferences = Injekt.get(),
 ) : ViewModel() {
 
     private val resourceCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val resourcesReleased = AtomicBoolean(false)
 
     private val persistentReaderSettingsStore =
-        scopedPreferenceStoreFactory.storeForSavedSource(savedState) ?: globalReaderPreferenceStore
+        globalReaderPreferenceStore
     private val persistentReaderPreferences = ReaderPreferences(persistentReaderSettingsStore)
     private val readerSettingsStore = SessionPreferenceStore(
         backingStore = persistentReaderSettingsStore,
@@ -142,13 +142,13 @@ class ReaderViewModel @JvmOverloads constructor(
     val readerPreferences = ReaderPreferences(readerSettingsStore)
     val persistReaderSettingsChanges = persistentReaderPreferences.persistReaderSettingsChanges
     private val basePreferences: BasePreferences =
-        scopedPreferenceStoreFactory.basePreferencesForSavedSource(savedState) ?: globalBasePreferences
+        globalBasePreferences
     private val downloadPreferences: DownloadPreferences =
-        scopedPreferenceStoreFactory.downloadPreferencesForSavedSource(savedState) ?: globalDownloadPreferences
+        globalDownloadPreferences
     private val trackPreferences: TrackPreferences =
-        scopedPreferenceStoreFactory.trackPreferencesForSavedSource(savedState) ?: globalTrackPreferences
+        globalTrackPreferences
     private val libraryPreferences: LibraryPreferences =
-        scopedPreferenceStoreFactory.libraryPreferencesForSavedSource(savedState) ?: globalLibraryPreferences
+        globalLibraryPreferences
 
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
@@ -1537,10 +1537,6 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(dialog = Dialog.PageActions(page, mergedPages)) }
     }
 
-    fun openSettingsDialog() {
-        mutableState.update { it.copy(dialog = Dialog.Settings) }
-    }
-
     fun closeDialog() {
         mutableState.update { it.copy(dialog = null) }
     }
@@ -1782,7 +1778,6 @@ class ReaderViewModel @JvmOverloads constructor(
 
     sealed interface Dialog {
         data object Loading : Dialog
-        data object Settings : Dialog
         data object ReadingModeSelect : Dialog
         data object OrientationModeSelect : Dialog
         data class PageActions(val page: ReaderPage, val mergedPages: List<ReaderPage>? = null) : Dialog

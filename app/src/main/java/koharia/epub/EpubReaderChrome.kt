@@ -31,11 +31,15 @@ import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.BrightnessMedium
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.FontDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.ScreenRotation
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
@@ -59,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.reader.components.ChapterNavigator
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
+import eu.kanade.tachiyomi.ui.reader.setting.EpubReaderToolbarAction
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import koharia.domain.epub.model.EpubBookmark
 import koharia.epub.model.EpubTocEntry
@@ -172,7 +177,13 @@ internal fun EpubReaderBottomArea(
     onPreviousChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onOpenContents: () -> Unit,
+    toolbarActions: List<EpubReaderToolbarAction>,
     onToggleNightMode: () -> Unit,
+    onOpenFont: (() -> Unit)?,
+    onOpenBrightness: () -> Unit,
+    onSearch: (() -> Unit)?,
+    onToggleTts: (() -> Unit)?,
+    onToggleOrientation: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleMore: () -> Unit,
     onOpenFontPicker: (() -> Unit)?,
@@ -262,24 +273,76 @@ internal fun EpubReaderBottomArea(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    EpubActionButton(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.List,
-                                contentDescription = stringResource(MR.strings.epub_reader_toc),
+                    toolbarActions.forEach { action ->
+                        when (action) {
+                            EpubReaderToolbarAction.CONTENTS -> EpubActionButton(
+                                icon = {
+                                    Icon(
+                                        Icons.AutoMirrored.Outlined.List,
+                                        stringResource(MR.strings.epub_reader_toc),
+                                    )
+                                },
+                                onClick = onOpenContents,
                             )
-                        },
-                        onClick = onOpenContents,
-                    )
-                    EpubActionButton(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Outlined.DarkMode,
-                                contentDescription = stringResource(MR.strings.epub_reader_quick_night_mode),
+                            EpubReaderToolbarAction.NIGHT_MODE -> EpubActionButton(
+                                icon = {
+                                    Icon(
+                                        Icons.Outlined.DarkMode,
+                                        stringResource(MR.strings.epub_reader_quick_night_mode),
+                                    )
+                                },
+                                onClick = onToggleNightMode,
                             )
-                        },
-                        onClick = onToggleNightMode,
-                    )
+                            EpubReaderToolbarAction.FONT -> EpubActionButton(
+                                enabled = onOpenFont != null,
+                                icon = {
+                                    Icon(
+                                        Icons.Outlined.FontDownload,
+                                        stringResource(MR.strings.pref_epub_font_family),
+                                    )
+                                },
+                                onClick = { onOpenFont?.invoke() },
+                            )
+                            EpubReaderToolbarAction.BRIGHTNESS -> EpubActionButton(
+                                icon = {
+                                    Icon(
+                                        Icons.Outlined.BrightnessMedium,
+                                        stringResource(MR.strings.pref_custom_brightness),
+                                    )
+                                },
+                                onClick = onOpenBrightness,
+                            )
+                            EpubReaderToolbarAction.SEARCH -> EpubActionButton(
+                                enabled = onSearch != null,
+                                icon = { Icon(Icons.Outlined.Search, stringResource(MR.strings.action_search)) },
+                                onClick = { onSearch?.invoke() },
+                            )
+                            EpubReaderToolbarAction.TTS -> EpubActionButton(
+                                enabled = onToggleTts != null,
+                                icon = {
+                                    Icon(
+                                        Icons.Outlined.RecordVoiceOver,
+                                        stringResource(MR.strings.reader_read_aloud),
+                                    )
+                                },
+                                onClick = { onToggleTts?.invoke() },
+                            )
+                            EpubReaderToolbarAction.ORIENTATION -> EpubActionButton(
+                                icon = {
+                                    Icon(
+                                        Icons.Outlined.ScreenRotation,
+                                        stringResource(MR.strings.rotation_type),
+                                    )
+                                },
+                                onClick = onToggleOrientation,
+                            )
+                            EpubReaderToolbarAction.MORE -> EpubActionButton(
+                                icon = { Icon(Icons.Outlined.MoreHoriz, stringResource(MR.strings.label_more)) },
+                                selected = activePanel == EpubBottomPanel.MORE,
+                                onClick = onToggleMore,
+                            )
+                        }
+                    }
                     EpubActionButton(
                         icon = {
                             Icon(
@@ -289,16 +352,6 @@ internal fun EpubReaderBottomArea(
                         },
                         selected = activePanel == EpubBottomPanel.SETTINGS,
                         onClick = onToggleSettings,
-                    )
-                    EpubActionButton(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Outlined.MoreHoriz,
-                                contentDescription = stringResource(MR.strings.label_more),
-                            )
-                        },
-                        selected = activePanel == EpubBottomPanel.MORE,
-                        onClick = onToggleMore,
                     )
                 }
             }
@@ -310,10 +363,15 @@ internal fun EpubReaderBottomArea(
 private fun EpubActionButton(
     icon: @Composable () -> Unit,
     selected: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val alpha = if (selected) 1f else 0.82f
-    IconButton(onClick = onClick) {
+    val alpha = when {
+        !enabled -> 0.38f
+        selected -> 1f
+        else -> 0.82f
+    }
+    IconButton(onClick = onClick, enabled = enabled) {
         Box(modifier = Modifier.alpha(alpha)) {
             icon()
         }

@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,8 +64,6 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.util.system.toast
 import koharia.connection.ConnectionConfigManager
 import koharia.connection.ConnectionConfigMode
-import koharia.connection.ConnectionConfigModeInterceptor
-import koharia.connection.ConnectionConfigModeWarning
 import koharia.connection.ConnectionLibraryRefreshAdapter
 import koharia.connection.ConnectionManagementAdapter
 import koharia.connection.ConnectionPreferences
@@ -104,20 +103,15 @@ class LibraryConnectionProfilesScreen(
         val connectionProfileManager = remember { Injekt.get<ConnectionProfileManager>() }
         val connectionRegistry = remember { Injekt.get<ConnectionRegistry>() }
         val sourceManager = remember { Injekt.get<SourceManager>() }
-        val localConfigManager = remember { Injekt.get<ConnectionConfigManager>() }
         val availableProviders = remember(connectionRegistry) { connectionRegistry.availableProviders() }
         val managementAdapters = remember(availableProviders) {
             availableProviders.mapNotNull { provider ->
                 (provider as? ConnectionManagementAdapter)?.let { provider.id to it }
             }
         }
-        val configModeInterceptors = remember(availableProviders) {
-            availableProviders.filterIsInstance<ConnectionConfigModeInterceptor>()
-        }
         val profiles by connectionPreferences.profilesChanges()
             .collectAsState(initial = connectionPreferences.getProfiles())
         val activeConnectionId by connectionPreferences.activeConnectionId.collectAsState()
-        val localConfigMode by connectionPreferences.configMode.collectAsState()
         val scope = rememberCoroutineScope()
 
         var selectedProviderId by rememberSaveable {
@@ -127,12 +121,38 @@ class LibraryConnectionProfilesScreen(
         var showAddDialog by rememberSaveable { mutableStateOf(false) }
         var initialAddHandled by rememberSaveable { mutableStateOf(false) }
         var showModeHelpDialog by rememberSaveable { mutableStateOf(false) }
-        var pendingModeChange by remember { mutableStateOf<PendingModeChange?>(null) }
-        var pendingConnectionName by rememberSaveable { mutableStateOf<String?>(null) }
         var profileToDelete by remember { mutableStateOf<LibraryConnectionProfile?>(null) }
+        var profileActions by remember { mutableStateOf<LibraryConnectionProfile?>(null) }
         var refreshingConnectionIds by remember { mutableStateOf(emptySet<Long>()) }
         val addConnectionTitle = stringResource(MR.strings.connection_settings_add_title)
         val editConnectionTitle = stringResource(MR.strings.connection_settings_edit_title)
+
+        fun editProfile(profile: LibraryConnectionProfile) {
+            connectionRegistry.provider(profile.providerId)
+                ?.createSettingsScreen(profile = profile, titleOverride = editConnectionTitle)
+                ?.let(navigator::push)
+        }
+
+        fun refreshProfile(profile: LibraryConnectionProfile) {
+            val refreshAdapter = sourceManager.get(profile.id) as? ConnectionLibraryRefreshAdapter ?: return
+            if (profile.id in refreshingConnectionIds) return
+            refreshingConnectionIds += profile.id
+            scope.launch {
+                val result = refreshAdapter.refreshLibrary()
+                refreshingConnectionIds -= profile.id
+                result.fold(
+                    onSuccess = { refreshResult ->
+                        context.toast(
+                            context.contextStringResource(
+                                MR.strings.local_library_refresh_complete,
+                                refreshResult.itemCount,
+                            ),
+                        )
+                    },
+                    onFailure = { context.toast(MR.strings.local_library_refresh_failed) },
+                )
+            }
+        }
 
         fun createConnection(name: String) {
             val providerId = selectedProviderId ?: return
@@ -148,33 +168,11 @@ class LibraryConnectionProfilesScreen(
                 ?.let(navigator::push)
         }
 
-        fun applyConfigModeChange(mode: ConnectionConfigMode) {
-            configModeInterceptors.forEach { it.prepareConfigModeChange(mode) }
-            localConfigManager.setConnectionConfigMode(mode)
-        }
-
-        fun requestConfigModeChange(
-            mode: ConnectionConfigMode,
-            connectionNameAfterChange: String? = null,
-        ) {
-            val warnings = configModeInterceptors.mapNotNull { it.warningForConfigMode(mode) }
-            if (warnings.isEmpty()) {
-                applyConfigModeChange(mode)
-                connectionNameAfterChange?.let(::createConnection)
-            } else {
-                pendingModeChange = PendingModeChange(mode, warnings, connectionNameAfterChange)
-            }
-        }
-
         fun beginProviderSetup(providerId: String) {
             val provider = connectionRegistry.provider(providerId) ?: return
             selectedProviderId = providerId
             if (provider.configuresConnectionNameInSettings) {
-                if (profiles.size == 1) {
-                    pendingConnectionName = provider.displayName
-                } else {
-                    createConnection(provider.displayName)
-                }
+                createConnection(provider.displayName)
             } else {
                 showAddDialog = true
             }
@@ -226,27 +224,6 @@ class LibraryConnectionProfilesScreen(
                 item {
                     PreferenceGroupHeader(title = stringResource(MR.strings.connection_management_modes_group))
                 }
-                item {
-                    ListPreferenceWidget(
-                        value = localConfigMode,
-                        title = stringResource(MR.strings.connection_config_mode),
-                        subtitle = stringResource(
-                            if (localConfigMode == ConnectionConfigMode.Shared) {
-                                MR.strings.connection_config_mode_shared
-                            } else {
-                                MR.strings.connection_config_mode_separate
-                            },
-                        ),
-                        icon = null,
-                        entries = mapOf(
-                            ConnectionConfigMode.Shared to stringResource(MR.strings.connection_config_mode_shared),
-                            ConnectionConfigMode.Separate to stringResource(
-                                MR.strings.connection_config_mode_separate,
-                            ),
-                        ).toImmutableMap(),
-                        onValueChange = ::requestConfigModeChange,
-                    )
-                }
                 managementAdapters.forEach { (providerId, adapter) ->
                     item(key = "management:$providerId") {
                         with(adapter) {
@@ -284,36 +261,11 @@ class LibraryConnectionProfilesScreen(
                             isAvailable = provider != null,
                             isActive = activeConnectionId == profile.id,
                             onSelect = { connectionPreferences.activeConnectionId.set(profile.id) },
-                            onEdit = {
-                                provider?.createSettingsScreen(
-                                    profile = profile,
-                                    titleOverride = editConnectionTitle,
-                                )?.let(navigator::push)
-                            },
+                            onLongClick = { profileActions = profile },
+                            onEdit = { editProfile(profile) },
                             canRefresh = refreshAdapter != null,
                             isRefreshing = profile.id in refreshingConnectionIds,
-                            onRefresh = {
-                                if (refreshAdapter != null && profile.id !in refreshingConnectionIds) {
-                                    refreshingConnectionIds += profile.id
-                                    scope.launch {
-                                        val result = refreshAdapter.refreshLibrary()
-                                        refreshingConnectionIds -= profile.id
-                                        result.fold(
-                                            onSuccess = { refreshResult ->
-                                                context.toast(
-                                                    context.contextStringResource(
-                                                        MR.strings.local_library_refresh_complete,
-                                                        refreshResult.itemCount,
-                                                    ),
-                                                )
-                                            },
-                                            onFailure = {
-                                                context.toast(MR.strings.local_library_refresh_failed)
-                                            },
-                                        )
-                                    }
-                                }
-                            },
+                            onRefresh = { refreshProfile(profile) },
                             onDelete = { profileToDelete = profile },
                         )
                     }
@@ -328,14 +280,47 @@ class LibraryConnectionProfilesScreen(
             )
         }
 
-        pendingModeChange?.let { pending ->
-            ConfigModeWarningDialog(
-                warnings = pending.warnings,
-                onDismissRequest = { pendingModeChange = null },
-                onConfirm = {
-                    applyConfigModeChange(pending.mode)
-                    pending.connectionNameAfterChange?.let(::createConnection)
-                    pendingModeChange = null
+        profileActions?.let { profile ->
+            val provider = connectionRegistry.provider(profile.providerId)
+            val canRefresh = sourceManager.get(profile.id) is ConnectionLibraryRefreshAdapter
+            AlertDialog(
+                onDismissRequest = { profileActions = null },
+                title = { Text(profile.name) },
+                text = {
+                    Column {
+                        TextButton(
+                            enabled = activeConnectionId != profile.id,
+                            onClick = {
+                                connectionPreferences.activeConnectionId.set(profile.id)
+                                profileActions = null
+                            },
+                        ) { Text(stringResource(MR.strings.connection_set_active)) }
+                        TextButton(
+                            enabled = canRefresh && profile.id !in refreshingConnectionIds,
+                            onClick = {
+                                refreshProfile(profile)
+                                profileActions = null
+                            },
+                        ) { Text(stringResource(MR.strings.action_webview_refresh)) }
+                        TextButton(
+                            enabled = provider != null,
+                            onClick = {
+                                editProfile(profile)
+                                profileActions = null
+                            },
+                        ) { Text(stringResource(MR.strings.action_edit)) }
+                        TextButton(
+                            onClick = {
+                                profileToDelete = profile
+                                profileActions = null
+                            },
+                        ) { Text(stringResource(MR.strings.action_delete)) }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { profileActions = null }) {
+                        Text(stringResource(MR.strings.action_cancel))
+                    }
                 },
             )
         }
@@ -358,26 +343,10 @@ class LibraryConnectionProfilesScreen(
                 isNameAvailable = provider?.let { it::isConnectionNameAvailable } ?: { false },
                 onDismissRequest = {
                     showAddDialog = false
-                    pendingConnectionName = null
                 },
                 onAddConnection = { name ->
                     showAddDialog = false
-                    if (profiles.size == 1) {
-                        pendingConnectionName = name
-                    } else {
-                        createConnection(name)
-                    }
-                },
-            )
-        }
-
-        pendingConnectionName?.let { connectionName ->
-            ConnectionConfigModeSelectionDialog(
-                selected = localConfigMode,
-                onDismissRequest = { pendingConnectionName = null },
-                onConfirm = { mode ->
-                    pendingConnectionName = null
-                    requestConfigModeChange(mode, connectionName)
+                    createConnection(name)
                 },
             )
         }
@@ -461,11 +430,6 @@ private fun ModeHelpDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(text = stringResource(MR.strings.connection_config_mode))
-                    Text(text = stringResource(MR.strings.connection_config_mode_shared_explanation))
-                    Text(text = stringResource(MR.strings.connection_config_mode_separate_explanation))
-                }
                 managementAdapters.forEach { adapter ->
                     with(adapter) {
                         ConnectionManagementHelpContent()
@@ -481,56 +445,13 @@ private fun ModeHelpDialog(
 }
 
 @Composable
-private fun ConfigModeWarningDialog(
-    warnings: List<ConnectionConfigModeWarning>,
-    onDismissRequest: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(text = stringResource(MR.strings.action_ok))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text(text = stringResource(MR.strings.action_cancel))
-            }
-        },
-        title = {
-            Text(
-                text = stringResource(
-                    warnings.singleOrNull()?.title ?: MR.strings.connection_config_mode_dialog_title,
-                ),
-            )
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                warnings.forEach { warning ->
-                    if (warnings.size > 1) {
-                        Text(text = stringResource(warning.title))
-                    }
-                    Text(text = stringResource(warning.message))
-                }
-            }
-        },
-    )
-}
-
-private data class PendingModeChange(
-    val mode: ConnectionConfigMode,
-    val warnings: List<ConnectionConfigModeWarning>,
-    val connectionNameAfterChange: String?,
-)
-
-@Composable
 private fun ConnectionRow(
     profile: LibraryConnectionProfile,
     providerName: String,
     isAvailable: Boolean,
     isActive: Boolean,
     onSelect: () -> Unit,
+    onLongClick: () -> Unit,
     canRefresh: Boolean,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
@@ -622,13 +543,14 @@ private fun ConnectionRow(
                         }
                     }
                 }
-                .clickable {
-                    if (isDeleteRevealed) {
-                        settleRow(revealed = false)
-                    } else {
-                        onSelect()
-                    }
-                }
+                .combinedClickable(
+                    onClick = {
+                        if (isDeleteRevealed) settleRow(revealed = false) else onSelect()
+                    },
+                    onLongClick = {
+                        if (isDeleteRevealed) settleRow(revealed = false) else onLongClick()
+                    },
+                )
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -823,73 +745,4 @@ private fun DeleteConnectionDialog(
             )
         },
     )
-}
-
-@Composable
-private fun ConnectionConfigModeSelectionDialog(
-    selected: ConnectionConfigMode,
-    onDismissRequest: () -> Unit,
-    onConfirm: (ConnectionConfigMode) -> Unit,
-) {
-    var selectedMode by rememberSaveable { mutableStateOf(selected) }
-
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        confirmButton = {
-            TextButton(onClick = { onConfirm(selectedMode) }) {
-                Text(text = stringResource(MR.strings.action_ok))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text(text = stringResource(MR.strings.action_cancel))
-            }
-        },
-        title = {
-            Text(text = stringResource(MR.strings.connection_config_mode_dialog_title))
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = stringResource(MR.strings.connection_config_mode_dialog_message))
-                ConnectionConfigModeOption(
-                    title = stringResource(MR.strings.connection_config_mode_shared),
-                    summary = stringResource(MR.strings.connection_config_mode_shared_summary),
-                    selected = selectedMode == ConnectionConfigMode.Shared,
-                    onClick = { selectedMode = ConnectionConfigMode.Shared },
-                )
-                ConnectionConfigModeOption(
-                    title = stringResource(MR.strings.connection_config_mode_separate),
-                    summary = stringResource(MR.strings.connection_config_mode_separate_summary),
-                    selected = selectedMode == ConnectionConfigMode.Separate,
-                    onClick = { selectedMode = ConnectionConfigMode.Separate },
-                )
-            }
-        },
-    )
-}
-
-@Composable
-private fun ConnectionConfigModeOption(
-    title: String,
-    summary: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        RadioButton(
-            selected = selected,
-            onClick = onClick,
-        )
-        Column {
-            Text(text = title)
-            Text(text = summary)
-        }
-    }
 }

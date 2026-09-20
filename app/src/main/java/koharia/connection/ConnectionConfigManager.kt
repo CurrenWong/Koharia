@@ -36,195 +36,27 @@ import tachiyomi.domain.storage.service.StoragePreferences
 
 class ConnectionConfigManager(
     private val preferenceStore: PreferenceStore,
-    private val connectionPreferences: ConnectionPreferences,
-    private val scopedPreferenceKeys: Set<String>,
 ) : PreferenceScopeProvider {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val _canEditScopedPreferences = MutableStateFlow(canEditScopedPreferences())
-    val canEditScopedPreferences: StateFlow<Boolean> = _canEditScopedPreferences.asStateFlow()
+    override fun currentScope(): PreferenceScope = SharedAppPreferenceScope.currentScope()
 
-    init {
-        scope.launch {
-            scopeChanges()
-                .map { resolvedScope ->
-                    logcat(LogPriority.DEBUG) {
-                        "Connection config scope changed: " +
-                            "localConfigMode=${connectionPreferences.configMode.get()}, " +
-                            "activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
-                            "scope=${resolvedScope.prefix}, " +
-                            "allowLegacyFallback=${resolvedScope.allowLegacyFallback}"
-                    }
-                    canEditScopedPreferences()
-                }
-                .distinctUntilChanged()
-                .collect { _canEditScopedPreferences.value = it }
-        }
-    }
-
-    override fun currentScope(): PreferenceScope {
-        return scopeForConnection(
-            mode = connectionPreferences.configMode.get(),
-            connectionId = connectionPreferences.activeConnectionId.get(),
-        )
-    }
-
-    override fun scopeChanges(): Flow<PreferenceScope> {
-        return combine(
-            connectionPreferences.configMode.changes(),
-            connectionPreferences.activeConnectionId.changes(),
-            ::scopeForConnection,
-        ).distinctUntilChanged()
-    }
-
-    fun canEditScopedPreferences(): Boolean {
-        return connectionPreferences.configMode.get() != ConnectionConfigMode.Separate ||
-            connectionPreferences.activeConnectionId.get() != NO_ACTIVE_CONNECTION
-    }
-
-    fun setConnectionConfigMode(mode: ConnectionConfigMode) {
-        if (connectionPreferences.configMode.get() == mode) return
-
-        logcat(LogPriority.DEBUG) {
-            "Switching local config mode from ${connectionPreferences.configMode.get()} to $mode " +
-                "(activeConnectionId=${connectionPreferences.activeConnectionId.get()}, " +
-                "profiles=${connectionPreferences.getProfiles().map { it.id }})"
-        }
-
-        if (mode == ConnectionConfigMode.Separate) {
-            cloneSharedScopeToProfiles(connectionPreferences.getProfiles())
-        }
-
-        connectionPreferences.configMode.set(mode)
-        _canEditScopedPreferences.value = canEditScopedPreferences()
-    }
-
-    fun initializeScopeForNewConnection(connectionId: Long) {
-        if (connectionPreferences.configMode.get() != ConnectionConfigMode.Separate) return
-
-        val targetPrefix = connectionScopePrefix(connectionId)
-        if (preferenceStore.getAll().keys.any { it.startsWith(targetPrefix) }) {
-            logcat(LogPriority.DEBUG) {
-                "Skipping scoped config initialization for connectionId=$connectionId because scope already exists: " +
-                    targetPrefix
-            }
-            return
-        }
-
-        val source = captureCurrentEffectiveEntries()
-        val currentScopePrefix = currentScope().prefix
-        logcat(LogPriority.DEBUG) {
-            "Initializing scoped config for new connectionId=$connectionId from current scope $currentScopePrefix " +
-                "with ${source.size} entries"
-        }
-        copyEntries(
-            source = source,
-            targetPrefix = targetPrefix,
-        )
-    }
+    override fun scopeChanges(): Flow<PreferenceScope> = SharedAppPreferenceScope.scopeChanges()
 
     fun clearScopeForConnection(connectionId: Long) {
-        // A connection may still have a dedicated scope after switching back to shared mode.
-        // Removing the profile must clear that stale scope without touching shared settings.
-        val targetPrefix = connectionScopePrefix(connectionId)
-        val keysToDelete = preferenceStore.getAll().keys.filter { it.startsWith(targetPrefix) }
-        if (keysToDelete.isEmpty()) return
-
-        logcat(LogPriority.DEBUG) {
-            "Clearing ${keysToDelete.size} scoped preference entries for connectionId=$connectionId in scope $targetPrefix"
-        }
-        keysToDelete.forEach { preferenceStore.getString(it).delete() }
-    }
-
-    private fun cloneSharedScopeToProfiles(profiles: List<LibraryConnectionProfile>) {
-        if (profiles.isEmpty()) return
-
-        val entries = captureSharedEntries()
-        logcat(LogPriority.DEBUG) {
-            "Cloning shared local config into ${profiles.size} connection scopes with ${entries.size} entries"
-        }
-        profiles.forEach { profile ->
-            copyEntries(entries, connectionScopePrefix(profile.id))
-        }
-    }
-
-    private fun captureCurrentEffectiveEntries(): Map<String, *> {
-        val currentScope = currentScope()
-        return if (currentScope.prefix == sharedScope.prefix) {
-            captureSharedEntries()
-        } else {
-            capturePrefixedEntries(currentScope.prefix)
-        }
-    }
-
-    private fun captureSharedEntries(): Map<String, *> {
-        val allEntries = preferenceStore.getAll()
-        return buildMap {
-            scopedPreferenceKeys.forEach { key ->
-                val sharedKey = sharedScope.prefix + key
-                when {
-                    allEntries.containsKey(sharedKey) -> put(key, allEntries.getValue(sharedKey))
-                    allEntries.containsKey(key) -> put(key, allEntries.getValue(key))
-                }
-            }
-        }
-    }
-
-    private fun capturePrefixedEntries(prefix: String): Map<String, *> {
-        return preferenceStore.getAll()
-            .filterKeys { it.startsWith(prefix) }
-            .mapKeys { (key, _) -> key.removePrefix(prefix) }
-    }
-
-    private fun copyEntries(
-        source: Map<String, *>,
-        targetPrefix: String,
-    ) {
-        logcat(LogPriority.DEBUG) {
-            "Copying ${source.size} scoped preference entries into scope $targetPrefix"
-        }
-        source.forEach { (key, value) ->
-            setRawValue(targetPrefix + key, value)
-        }
-    }
-
-    private fun setRawValue(
-        key: String,
-        value: Any?,
-    ) {
-        when (value) {
-            is String -> preferenceStore.getString(key).set(value)
-            is Int -> preferenceStore.getInt(key).set(value)
-            is Long -> preferenceStore.getLong(key).set(value)
-            is Float -> preferenceStore.getFloat(key).set(value)
-            is Boolean -> preferenceStore.getBoolean(key).set(value)
-            is Set<*> -> {
-                @Suppress("UNCHECKED_CAST")
-                (value as? Set<String>)?.let { preferenceStore.getStringSet(key).set(it) }
-            }
-        }
-    }
-
-    private fun resolveScope(
-        mode: ConnectionConfigMode,
-        activeConnectionId: Long,
-    ): PreferenceScope {
-        return scopeForConnection(mode, activeConnectionId)
+        val prefix = "${connectionScopeName(connectionId)}::"
+        preferenceStore.getAll().keys.filter { it.startsWith(prefix) }
+            .forEach { preferenceStore.getString(it).delete() }
     }
 
     companion object {
         const val SHARED_SCOPE_NAME = ConnectionPreferenceScopes.SHARED_SCOPE_NAME
 
-        fun buildScopedPreferenceKeys(
+        fun buildPreferenceDefaults(
             app: Application,
             verboseLoggingDefault: Boolean,
-        ): Set<String> {
+        ): Map<String, Any> {
             val recorder = RecordingPreferenceStore()
-            val folderProvider = object : FolderProvider {
-                override fun directory() = app.cacheDir
-
-                override fun path() = app.cacheDir.absolutePath
-            }
+            val folderProvider = tachiyomi.core.common.storage.AndroidStorageFolderProvider(app)
 
             BasePreferences(app, recorder)
             SourcePreferences(recorder)
@@ -241,31 +73,18 @@ class ConnectionConfigManager(
             StoragePreferences(folderProvider, recorder)
             UiPreferences(recorder)
 
-            return recorder.recordedKeys
+            return recorder.defaults.filterKeys {
+                !Preference.isAppState(it) || it == Preference.appStateKey("storage_dir")
+            }
         }
 
         fun connectionScopeName(connectionId: Long): String =
             ConnectionPreferenceScopes.connectionScopeName(connectionId)
-
-        fun scopeForConnection(
-            mode: ConnectionConfigMode,
-            connectionId: Long,
-        ): PreferenceScope {
-            return ConnectionPreferenceScopes.forConnection(mode, connectionId)
-        }
-
-        private fun connectionScopePrefix(connectionId: Long): String = "${connectionScopeName(connectionId)}::"
-
-        private val sharedScope = ConnectionPreferenceScopes.forConnection(
-            mode = ConnectionConfigMode.Shared,
-            connectionId = NO_ACTIVE_CONNECTION,
-        )
     }
 }
 
 private class RecordingPreferenceStore : PreferenceStore {
-    private val _recordedKeys = linkedSetOf<String>()
-    val recordedKeys: Set<String> = _recordedKeys
+    val defaults = linkedMapOf<String, Any>()
 
     override fun getString(key: String, defaultValue: String): Preference<String> = record(key, defaultValue)
 
@@ -287,14 +106,20 @@ private class RecordingPreferenceStore : PreferenceStore {
         defaultValue: T,
         serializer: (T) -> String,
         deserializer: (String) -> T,
-    ): Preference<T> = record(key, defaultValue)
+    ): Preference<T> {
+        defaults[key] = serializer(defaultValue)
+        return RecordingPreference(key, defaultValue)
+    }
 
     override fun <T> getObjectFromInt(
         key: String,
         defaultValue: T,
         serializer: (T) -> Int,
         deserializer: (Int) -> T,
-    ): Preference<T> = record(key, defaultValue)
+    ): Preference<T> {
+        defaults[key] = serializer(defaultValue)
+        return RecordingPreference(key, defaultValue)
+    }
 
     override fun getAll(): Map<String, *> = emptyMap<String, Any>()
 
@@ -302,7 +127,7 @@ private class RecordingPreferenceStore : PreferenceStore {
         key: String,
         defaultValue: T,
     ): Preference<T> {
-        _recordedKeys += key
+        if (defaultValue != null) defaults[key] = defaultValue as Any
         return RecordingPreference(key, defaultValue)
     }
 }

@@ -23,8 +23,14 @@ class KomgaOfflineInterceptor(
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
         val cachedOnly = cachedOnlyProvider()
-        val canUseNetwork = shouldUseKomgaNetwork(cachedOnly, context.isOnline())
-        if (!canUseNetwork || originalRequest.tag(KomgaCachePolicy::class.java) == KomgaCachePolicy.Default) {
+        val progressSync = originalRequest.isKomgaProgressSync
+        val canUseNetwork = shouldUseKomgaNetwork(cachedOnly, context.isOnline(), progressSync)
+        if (progressSync && !canUseNetwork) {
+            throw IOException(context.stringResource(MR.strings.exception_offline))
+        }
+        if (!progressSync &&
+            (!canUseNetwork || originalRequest.tag(KomgaCachePolicy::class.java) == KomgaCachePolicy.Default)
+        ) {
             metadataCacheStore.load(originalRequest, if (canUseNetwork) minimumFetchedAt() else 0L)?.let { return it }
         }
         val request = if (canUseNetwork) {
@@ -67,4 +73,8 @@ class KomgaOfflineInterceptor(
     }
 }
 
-internal fun shouldUseKomgaNetwork(cachedOnly: Boolean, isOnline: Boolean): Boolean = !cachedOnly && isOnline
+internal fun shouldUseKomgaNetwork(
+    cachedOnly: Boolean,
+    isOnline: Boolean,
+    progressSync: Boolean = false,
+): Boolean = isOnline && (!cachedOnly || progressSync)

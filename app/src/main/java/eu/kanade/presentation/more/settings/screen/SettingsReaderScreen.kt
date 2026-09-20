@@ -12,12 +12,14 @@ import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderEInkPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderStatusPosition
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.transition.PageTransitionEffect
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import koharia.connection.ConnectionConfigMode
 import koharia.connection.ConnectionPreferences
 import koharia.connection.NO_ACTIVE_CONNECTION
+import koharia.epub.settings.ComicBackgroundSettingsPreference
 import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.epub.settings.EpubFontPreference
 import koharia.epub.settings.EpubLayoutPreferences
@@ -48,6 +50,19 @@ object SettingsComicReaderScreen : SearchableSettings {
     }
 }
 
+object SettingsCommonReaderScreen : SearchableSettings {
+
+    @ReadOnlyComposable
+    @Composable
+    override fun getTitleRes() = MR.strings.pref_category_common_reader
+
+    @Composable
+    override fun getPreferences(): List<Preference> {
+        val readerPreferences = remember { Injekt.get<ReaderPreferences>() }
+        return SettingsReaderScreen.commonPreferences(readerPreferences)
+    }
+}
+
 object SettingsBookReaderScreen : SearchableSettings {
 
     @ReadOnlyComposable
@@ -59,30 +74,10 @@ object SettingsBookReaderScreen : SearchableSettings {
         val readerPref = remember { Injekt.get<ReaderPreferences>() }
         val epubReaderPref = remember { Injekt.get<EpubReaderPreferences>() }
         val epubLayoutPreferences = remember { Injekt.get<EpubLayoutPreferences>() }
-        val connectionPreferences = remember { Injekt.get<ConnectionPreferences>() }
-        val localConfigMode by connectionPreferences.configMode.collectAsState()
-        val activeServerId by connectionPreferences.activeConnectionId.collectAsState()
-
-        val profileName = remember(activeServerId) {
-            connectionPreferences.getProfiles()
-                .firstOrNull { it.id == activeServerId }
-                ?.name
-                ?: activeServerId.toString()
-        }
-        val scopeSummary = when {
-            activeServerId == NO_ACTIVE_CONNECTION ->
-                stringResource(MR.strings.komga_scoped_settings_disabled_summary)
-            localConfigMode == ConnectionConfigMode.Shared ->
-                stringResource(MR.strings.pref_server_scope_shared)
-            else ->
-                stringResource(MR.strings.pref_server_scope_server, profileName)
-        }
-
         return SettingsReaderScreen.bookPreferences(
             readerPreferences = readerPref,
             epubReaderPreferences = epubReaderPref,
             epubLayoutPreferences = epubLayoutPreferences,
-            scopeSummary = scopeSummary,
         )
     }
 }
@@ -99,11 +94,40 @@ object SettingsReaderScreen : SearchableSettings {
         val epubReaderPref = remember { Injekt.get<EpubReaderPreferences>() }
         val epubLayoutPreferences = remember { Injekt.get<EpubLayoutPreferences>() }
 
-        return comicPreferences(readerPref) + bookPreferences(
+        return commonPreferences(readerPref) + comicPreferences(readerPref) + bookPreferences(
             readerPreferences = readerPref,
             epubReaderPreferences = epubReaderPref,
             epubLayoutPreferences = epubLayoutPreferences,
-            scopeSummary = stringResource(MR.strings.pref_server_scope_shared),
+        )
+    }
+
+    @Composable
+    internal fun commonPreferences(readerPreferences: ReaderPreferences): List<Preference> {
+        val navigator = LocalNavigator.currentOrThrow
+        return listOf(
+            getCommonDisplayGroup(readerPreferences),
+            getCommonNavigationGroup(readerPreferences),
+            getCommonColorGroup(readerPreferences),
+            getEInkGroup(readerPreferences),
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.reader_toolbar_settings),
+                preferenceItems = persistentListOf(
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.comic_reader_toolbar_settings),
+                        subtitle = stringResource(MR.strings.reader_toolbar_settings_summary),
+                        onClick = {
+                            navigator.push(ReaderToolbarSettingsScreen(ReaderToolbarType.COMIC))
+                        },
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.book_reader_toolbar_settings),
+                        subtitle = stringResource(MR.strings.reader_toolbar_settings_summary),
+                        onClick = {
+                            navigator.push(ReaderToolbarSettingsScreen(ReaderToolbarType.BOOK))
+                        },
+                    ),
+                ),
+            ),
         )
     }
 
@@ -131,13 +155,7 @@ object SettingsReaderScreen : SearchableSettings {
                 title = stringResource(MR.strings.pref_show_reading_mode),
                 subtitle = stringResource(MR.strings.pref_show_reading_mode_summary),
             ),
-            Preference.PreferenceItem.SwitchPreference(
-                preference = readerPreferences.showNavigationOverlayOnStart,
-                title = stringResource(MR.strings.pref_show_navigation_mode),
-                subtitle = stringResource(MR.strings.pref_show_navigation_mode_summary),
-            ),
-            getDisplayGroup(readerPreferences = readerPreferences),
-            getEInkGroup(readerPreferences = readerPreferences),
+            getComicDisplayGroup(readerPreferences = readerPreferences),
             getReadingGroup(readerPreferences = readerPreferences),
             getPagedGroup(readerPreferences = readerPreferences),
             getWebtoonGroup(readerPreferences = readerPreferences),
@@ -151,19 +169,13 @@ object SettingsReaderScreen : SearchableSettings {
         readerPreferences: ReaderPreferences,
         epubReaderPreferences: EpubReaderPreferences,
         epubLayoutPreferences: EpubLayoutPreferences,
-        scopeSummary: String,
     ): List<Preference> {
         return listOf(
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_server_scope),
-                subtitle = scopeSummary,
-            ),
             getEpubReaderGroup(epubReaderPreferences),
             getEpubReadingModeGroup(readerPreferences, epubLayoutPreferences),
             getEpubTypographyGroup(readerPreferences, epubLayoutPreferences),
             getEpubNavigationGroup(readerPreferences, epubLayoutPreferences),
-            getEpubDisplayGroup(readerPreferences),
-            getEpubFilterGroup(readerPreferences, epubLayoutPreferences),
+            getEpubImageDisplayGroup(epubLayoutPreferences),
         )
     }
 
@@ -384,7 +396,7 @@ object SettingsReaderScreen : SearchableSettings {
         val navigationMode by navigationModePreference.collectAsState()
         val readWithVolumeKeys by epubLayoutPreferences.readWithVolumeKeys.collectAsState()
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.pref_reader_navigation),
+            title = stringResource(MR.strings.pref_common_reader_controls),
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.ListPreference(
                     preference = epubLayoutPreferences.pageTransitionEffect,
@@ -422,101 +434,17 @@ object SettingsReaderScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_read_with_tapping_inverted),
                     enabled = navigationMode != 5,
                 ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.showNavigationOverlayOnStart,
-                    title = stringResource(MR.strings.pref_show_navigation_mode),
-                    subtitle = stringResource(MR.strings.pref_show_navigation_mode_summary),
-                ),
             ),
         )
     }
 
     @Composable
-    private fun getEpubDisplayGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
-        val fullscreen by readerPreferences.fullscreen.collectAsState()
-        return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.pref_category_display),
-            preferenceItems = persistentListOf(
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.showPageNumber,
-                    title = stringResource(MR.strings.epub_reader_show_reading_progress),
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.fullscreen,
-                    title = stringResource(MR.strings.pref_fullscreen),
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.drawUnderCutout,
-                    title = stringResource(MR.strings.pref_cutout_short),
-                    enabled = LocalView.current.hasDisplayCutout() && fullscreen,
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.keepScreenOn,
-                    title = stringResource(MR.strings.pref_keep_screen_on),
-                ),
-            ),
-        )
-    }
-
-    @Composable
-    private fun getEpubFilterGroup(
-        readerPreferences: ReaderPreferences,
+    private fun getEpubImageDisplayGroup(
         epubLayoutPreferences: EpubLayoutPreferences,
     ): Preference.PreferenceGroup {
-        val colorFilterEnabled by readerPreferences.colorFilter.collectAsState()
-        val colorValue by readerPreferences.colorFilterValue.collectAsState()
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.custom_filter),
+            title = stringResource(MR.strings.pref_epub_image_display),
             preferenceItems = persistentListOf(
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.colorFilter,
-                    title = stringResource(MR.strings.pref_custom_color_filter),
-                ),
-                epubColorChannelPreference(
-                    colorValue = colorValue,
-                    shift = 16,
-                    title = stringResource(MR.strings.color_filter_r_value),
-                    enabled = colorFilterEnabled,
-                    readerPreferences = readerPreferences,
-                ),
-                epubColorChannelPreference(
-                    colorValue = colorValue,
-                    shift = 8,
-                    title = stringResource(MR.strings.color_filter_g_value),
-                    enabled = colorFilterEnabled,
-                    readerPreferences = readerPreferences,
-                ),
-                epubColorChannelPreference(
-                    colorValue = colorValue,
-                    shift = 0,
-                    title = stringResource(MR.strings.color_filter_b_value),
-                    enabled = colorFilterEnabled,
-                    readerPreferences = readerPreferences,
-                ),
-                epubColorChannelPreference(
-                    colorValue = colorValue,
-                    shift = 24,
-                    title = stringResource(MR.strings.color_filter_a_value),
-                    enabled = colorFilterEnabled,
-                    readerPreferences = readerPreferences,
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    preference = readerPreferences.colorFilterMode,
-                    entries = ReaderPreferences.ColorFilterMode
-                        .mapIndexed { index, mode -> index to stringResource(mode.first) }
-                        .toMap()
-                        .toImmutableMap(),
-                    title = stringResource(MR.strings.pref_color_filter_mode),
-                    enabled = colorFilterEnabled,
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.grayscale,
-                    title = stringResource(MR.strings.pref_grayscale),
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = readerPreferences.invertedColors,
-                    title = stringResource(MR.strings.pref_inverted_colors),
-                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = epubLayoutPreferences.preserveImageColors,
                     title = stringResource(MR.strings.pref_epub_preserve_image_colors),
@@ -526,7 +454,7 @@ object SettingsReaderScreen : SearchableSettings {
         )
     }
 
-    private fun epubColorChannelPreference(
+    private fun readerColorChannelPreference(
         colorValue: Int,
         shift: Int,
         title: String,
@@ -551,12 +479,27 @@ object SettingsReaderScreen : SearchableSettings {
     }
 
     @Composable
-    private fun getDisplayGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+    private fun getCommonDisplayGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
         val fullscreenPref = readerPreferences.fullscreen
         val fullscreen by fullscreenPref.collectAsState()
+        val customBrightness by readerPreferences.customBrightness.collectAsState()
+        val customBrightnessValue by readerPreferences.customBrightnessValue.collectAsState()
+        val showStatus by readerPreferences.showPageNumber.collectAsState()
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.pref_category_display),
+            title = stringResource(MR.strings.pref_reader_screen_and_status),
             preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.customBrightness,
+                    title = stringResource(MR.strings.pref_custom_brightness),
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = customBrightnessValue,
+                    valueRange = -75..100,
+                    steps = 0,
+                    title = stringResource(MR.strings.epub_reader_brightness),
+                    enabled = customBrightness,
+                    onValueChanged = readerPreferences.customBrightnessValue::set,
+                ),
                 Preference.PreferenceItem.ListPreference(
                     preference = readerPreferences.defaultOrientationType,
                     entries = ReaderOrientation.entries
@@ -564,16 +507,6 @@ object SettingsReaderScreen : SearchableSettings {
                         .associate { it.flagValue to stringResource(it.stringRes) }
                         .toImmutableMap(),
                     title = stringResource(MR.strings.pref_rotation_type),
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    preference = readerPreferences.readerTheme,
-                    entries = persistentMapOf(
-                        1 to stringResource(MR.strings.black_background),
-                        2 to stringResource(MR.strings.gray_background),
-                        0 to stringResource(MR.strings.white_background),
-                        3 to stringResource(MR.strings.automatic_background),
-                    ),
-                    title = stringResource(MR.strings.pref_reader_theme),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = fullscreenPref,
@@ -591,6 +524,122 @@ object SettingsReaderScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.showPageNumber,
                     title = stringResource(MR.strings.pref_show_page_number),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = readerPreferences.readerStatusPosition,
+                    entries = persistentMapOf(
+                        ReaderStatusPosition.BOTTOM to stringResource(MR.strings.reader_status_bottom),
+                        ReaderStatusPosition.TOP to stringResource(MR.strings.reader_status_top),
+                    ),
+                    title = stringResource(MR.strings.reader_status_position),
+                    enabled = showStatus,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.showReaderChapterTitle,
+                    title = stringResource(MR.strings.reader_status_show_chapter),
+                    enabled = showStatus,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.showReaderClock,
+                    title = stringResource(MR.strings.reader_status_show_clock),
+                    enabled = showStatus,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.showReaderBattery,
+                    title = stringResource(MR.strings.reader_status_show_battery),
+                    enabled = showStatus,
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getComicDisplayGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_category_display),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(MR.strings.pref_reader_theme),
+                ) {
+                    ComicBackgroundSettingsPreference(readerPreferences)
+                },
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.showBufferingSpeed,
+                    title = stringResource(MR.strings.pref_show_buffering_speed),
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getCommonNavigationGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_reader_navigation),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.showNavigationOverlayOnStart,
+                    title = stringResource(MR.strings.pref_show_navigation_mode),
+                    subtitle = stringResource(MR.strings.pref_show_navigation_mode_summary),
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getCommonColorGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        val enabled by readerPreferences.colorFilter.collectAsState()
+        val colorValue by readerPreferences.colorFilterValue.collectAsState()
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.custom_filter),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.colorFilter,
+                    title = stringResource(MR.strings.pref_custom_color_filter),
+                ),
+                readerColorChannelPreference(
+                    colorValue,
+                    16,
+                    stringResource(MR.strings.color_filter_r_value),
+                    enabled,
+                    readerPreferences,
+                ),
+                readerColorChannelPreference(
+                    colorValue,
+                    8,
+                    stringResource(MR.strings.color_filter_g_value),
+                    enabled,
+                    readerPreferences,
+                ),
+                readerColorChannelPreference(
+                    colorValue,
+                    0,
+                    stringResource(MR.strings.color_filter_b_value),
+                    enabled,
+                    readerPreferences,
+                ),
+                readerColorChannelPreference(
+                    colorValue,
+                    24,
+                    stringResource(MR.strings.color_filter_a_value),
+                    enabled,
+                    readerPreferences,
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = readerPreferences.colorFilterMode,
+                    entries = ReaderPreferences.ColorFilterMode
+                        .mapIndexed { index, mode -> index to stringResource(mode.first) }
+                        .toMap()
+                        .toImmutableMap(),
+                    title = stringResource(MR.strings.pref_color_filter_mode),
+                    enabled = enabled,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.grayscale,
+                    title = stringResource(MR.strings.pref_grayscale),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.invertedColors,
+                    title = stringResource(MR.strings.pref_inverted_colors),
                 ),
             ),
         )

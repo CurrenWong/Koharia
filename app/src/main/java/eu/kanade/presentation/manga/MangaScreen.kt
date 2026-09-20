@@ -88,6 +88,7 @@ import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
 import eu.kanade.tachiyomi.ui.reader.pageProgressPercent
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import koharia.connection.ConnectionChapterMetadata
+import koharia.connection.ConnectionChapterTitleAdapter
 import koharia.connection.ConnectionLibraryShelfAdapter
 import koharia.connection.ConnectionMangaBehavior
 import koharia.connection.ConnectionMangaBehaviorAdapter
@@ -105,6 +106,8 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.motion.eInkAnimationSpec
 import tachiyomi.presentation.core.util.shouldExpandFAB
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 @Composable
@@ -1343,13 +1346,19 @@ private fun chapterTitle(
     manga: Manga,
     item: ChapterList.Item,
 ): String {
+    val providerTitle = (
+        Injekt.get<tachiyomi.domain.source.service.SourceManager>().get(
+            manga.source,
+        ) as? ConnectionChapterTitleAdapter
+        )
+        ?.detailsChapterTitle(item.chapter.memo)
     return if (manga.displayMode == Manga.CHAPTER_DISPLAY_NUMBER) {
         stringResource(
             MR.strings.display_mode_chapter,
             formatChapterNumber(item.chapter.chapterNumber),
         )
     } else {
-        item.chapter.name.withoutEmbeddedFileSize(item.chapter.memo)
+        providerTitle ?: item.chapter.name.withoutEmbeddedFileSize(item.chapter.memo)
     }
 }
 

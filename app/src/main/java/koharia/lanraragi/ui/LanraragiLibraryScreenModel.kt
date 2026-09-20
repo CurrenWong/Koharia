@@ -6,7 +6,6 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
-import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import koharia.domain.lanraragi.LanraragiEntry
 import koharia.domain.lanraragi.LanraragiReadState
@@ -40,17 +39,13 @@ import uy.kohesive.injekt.api.get
 class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: String?) :
     StateScreenModel<LanraragiLibraryScreenModel.State>(
         State(
-            filter = LanraragiFilter(
-                query = initialQuery.orEmpty(),
-                category = source.preferences.defaultCategory.takeIf { it.isNotEmpty() },
-                grouped = source.preferences.groupCollections,
-            ),
+            filter = initialLanraragiFilter(source, initialQuery),
+            rememberFilters = source.preferences.rememberFilters,
             toolbarQuery = initialQuery,
         ),
     ) {
     private val mangaRepository: MangaRepository = Injekt.get()
     private val downloads: DownloadManager = Injekt.get()
-    private val basePreferences: BasePreferences = Injekt.get()
     private var searchJob: Job? = null
     private var progressJob: Job? = null
 
@@ -91,12 +86,6 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
         screenModelScope.launch {
             source.repository.observeReadStates(source.id).collect { read ->
                 mutableState.update { it.copy(readStates = read) }
-            }
-        }
-        screenModelScope.launch {
-            basePreferences.downloadedOnly.changes().collect { value ->
-                mutableState.update { it.copy(downloadedOnly = value) }
-                search(state.value.filter.query)
             }
         }
     }
@@ -167,13 +156,18 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
         search(value.query)
     }
 
-    fun applyFilters(value: LanraragiFilter, downloaded: Boolean) {
-        basePreferences.downloadedOnly.set(downloaded)
+    fun applyFilters(value: LanraragiFilter, downloaded: Boolean, rememberFilters: Boolean) {
         mutableState.update { it.copy(downloadedOnly = downloaded) }
+        source.preferences.saveFilter(value, rememberFilters)
+        mutableState.update { it.copy(rememberFilters = rememberFilters) }
         filter(value)
     }
 
-    fun selectCategory(id: String?) = filter(state.value.filter.copy(category = id))
+    fun selectCategory(id: String?) {
+        val value = state.value.filter.copy(category = id)
+        if (state.value.rememberFilters) source.preferences.saveFilter(value, true)
+        filter(value)
+    }
 
     fun refresh(automatic: Boolean = false) {
         if (state.value.downloadedOnly) return
@@ -247,6 +241,7 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
         val readStates: List<LanraragiReadState> = emptyList(),
         val filter: LanraragiFilter = LanraragiFilter(),
         val downloadedOnly: Boolean = false,
+        val rememberFilters: Boolean = false,
         val displayMode: LibraryDisplayMode = LibraryDisplayMode.ComfortableGrid,
         val toolbarQuery: String? = null,
         val searchEntries: List<LanraragiEntry> = emptyList(),
@@ -257,4 +252,14 @@ class LanraragiLibraryScreenModel(val source: LanraragiSource, initialQuery: Str
         val categories: List<LanraragiEntry> get() = entries.filter { it.kind == LanraragiEntry.Kind.CATEGORY }
             .sortedWith(compareByDescending<LanraragiEntry> { it.pinned }.thenBy { it.title })
     }
+}
+
+private fun initialLanraragiFilter(source: LanraragiSource, initialQuery: String?): LanraragiFilter {
+    val saved = source.preferences.savedFilter().takeIf { source.preferences.rememberFilters }
+    return (
+        saved ?: LanraragiFilter(
+            category = source.preferences.defaultCategory.takeIf(String::isNotEmpty),
+            grouped = source.preferences.groupCollections,
+        )
+        ).copy(query = initialQuery.orEmpty())
 }

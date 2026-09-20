@@ -12,6 +12,7 @@ import koharia.komga.api.dto.LibraryDto
 import koharia.komga.api.dto.PageWrapperDto
 import koharia.source.komga.KomgaCachePolicy
 import koharia.source.komga.komgaCachePolicy
+import koharia.source.komga.komgaProgressSync
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -230,6 +231,7 @@ class KomgaApiClient(
         val builder = Request.Builder()
             .url("$bookUrl/read-progress")
             .headers(headers)
+            .komgaProgressSync()
 
         return if (read) {
             val payload = json.encodeToString(BookReadStatusUpdateDto(completed = true))

@@ -67,6 +67,8 @@ import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
+import eu.kanade.tachiyomi.data.updater.AppUpdateNotifier
+import eu.kanade.tachiyomi.data.updater.UpdatePreferences
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.deeplink.DeepLinkScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
@@ -114,6 +116,7 @@ class MainActivity : BaseActivity() {
 
     private val getIncognitoState: GetIncognitoState by injectLazy()
     private val connectionPreferences: ConnectionPreferences by injectLazy()
+    private val updatePreferences: UpdatePreferences by injectLazy()
 
     // To be checked by splash screen. If true then splash screen will be removed.
     var ready = false
@@ -125,6 +128,13 @@ class MainActivity : BaseActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (needsSharedConfigSelection()) {
+            configStartupDeferred = true
+            super.onCreate(null)
+            redirectToSharedConfigSelection()
+            return
+        }
+
         val isLaunch = savedInstanceState == null
 
         // Prevent splash screen showing up on configuration changes
@@ -311,10 +321,12 @@ class MainActivity : BaseActivity() {
 
         // App updates
         LaunchedEffect(Unit) {
-            if (updaterEnabled) {
+            if (updaterEnabled && updatePreferences.autoCheckUpdates.get()) {
                 try {
-                    val result = AppUpdateChecker().checkForUpdate(context)
+                    val result = AppUpdateChecker().checkForUpdate()
                     if (result is GetApplicationRelease.Result.NewUpdate) {
+                        if (!updatePreferences.showUpdateReminders.get()) return@LaunchedEffect
+                        AppUpdateNotifier(context).promptUpdate(result.release)
                         val updateScreen = NewUpdateScreen(
                             versionName = result.release.version,
                             changelogInfo = result.release.info,

@@ -22,6 +22,7 @@ class IncomingMediaParserTest {
             assertTrue(extension in LocalMediaFormats.comicExtensions)
         }
         assertTrue("cbz" in LocalMediaFormats.comicImportExtensions)
+        assertTrue("epub" in LocalMediaFormats.comicImportExtensions)
         assertTrue("pdf" in LocalMediaFormats.documentImportExtensions)
         assertTrue("image/vnd.djvu" in LocalMediaFormats.documentImportMimeTypes)
         assertFalse("image/png" in LocalMediaFormats.documentImportMimeTypes)
