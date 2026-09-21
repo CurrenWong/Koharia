@@ -294,6 +294,7 @@ private val settingScreens = listOf(
     SettingsCommonReaderScreen,
     SettingsComicReaderScreen,
     SettingsBookReaderScreen,
+    koharia.tts.ui.settings.TtsSettingsScreen,
     SettingsDownloadScreen,
     SettingsDataScreen,
     SettingsSecurityScreen,

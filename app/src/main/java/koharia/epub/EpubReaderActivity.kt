@@ -34,8 +34,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -98,7 +98,6 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import koharia.connection.SharedAppPreferences
-import koharia.epub.control.TtsControlPanel
 import koharia.epub.control.TtsDisclosureDialog
 import koharia.epub.control.TtsPanelState
 import koharia.epub.font.EpubFontId
@@ -120,11 +119,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Link
@@ -260,6 +261,34 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
     // ===== Phase 3 自动续播 =====
     // 目标章节 href（等待导航落定后起播）；null 表示当前没有待续播任务。
+    private var pendingTtsAdvanceSession: TtsProgressNotifier.Session? = null
+    private var ttsStartRequestId = 0L
+    private var ttsVisiblePage: Pair<String, Int>? = null
+    private var ttsResourceProgression: Pair<String, Double>? = null
+    private val ttsPageFollow by lazy {
+        EpubTtsPageFollow(
+            scope = lifecycleScope,
+            currentSession = {
+                ttsProgressNotifier.progress.value.session?.takeIf(viewModel::isCurrentTtsSession)
+            },
+            onPendingChanged = ttsProgressNotifier::setNavigationPending,
+            onCompletionReady = ::handleTtsChapterCompleted,
+            follow = { session ->
+                val restart = startTtsFromCurrentViewport(session)
+                try {
+                    restart?.join()
+                    withTimeoutOrNull(1_500) {
+                        ttsProgressNotifier.progress.first { it.session != session }
+                    }
+                } finally {
+                    restart?.cancel()
+                }
+            },
+        )
+    }
+
+    private var pendingTtsAdvanceRequestId = 0L
+    private var stoppedTtsSession: TtsProgressNotifier.Session? = null
     private var pendingTtsAdvanceTargetHref: String? = null
 
     // true 时靠 onLocatorChanged 命中目标 href 提前触发；false（同一资源内锚点）只能靠超时兜底。
@@ -305,11 +334,19 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         // PR review P1：本章一句都没能发声（key 无效 / 断网 / 限流 / 超长句）时提示用户，
         // 而不是静默地当作"播完"去跳下一章。
         ttsProgressNotifier.playbackFailed
-            .onEach { toast(MR.strings.tts_error_synthesis_failed, Toast.LENGTH_LONG) }
+            .onEach { session ->
+                val activeSession = ttsProgressNotifier.progress.value.session
+                if (session.belongsTo(viewModel.state.value.chapterId, viewModel.state.value.mangaId) &&
+                    (activeSession == null || activeSession == session)
+                ) {
+                    toast(MR.strings.tts_error_synthesis_failed, Toast.LENGTH_LONG)
+                }
+            }
             .launchIn(lifecycleScope)
 
         setComposeContent(enableAppRefresh = false) {
             val state by viewModel.state.collectAsState()
+            val followingManualPage by ttsPageFollow.pending.collectAsState()
             val flashOnPageChange by readerPreferences.flashOnPageChange.changes()
                 .collectAsState(readerPreferences.flashOnPageChange.get())
             val imageState by viewModel.imageState.collectAsState()
@@ -390,6 +427,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 .collectAsState(readerPreferences.showReaderChapterTitle.get())
             val showReaderClock by readerPreferences.showReaderClock.changes()
                 .collectAsState(readerPreferences.showReaderClock.get())
+            val showReaderPages by readerPreferences.showReaderPages.changes().collectAsState(
+                readerPreferences.showReaderPages.get(),
+            )
             val showReaderBattery by readerPreferences.showReaderBattery.changes()
                 .collectAsState(readerPreferences.showReaderBattery.get())
             val toolbarActionValue by readerPreferences.epubToolbarActions.changes()
@@ -472,7 +512,9 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     logcat(LogPriority.INFO) { "[EpubReaderActivity] tts-hl: progress=null (TTS 还没 bind?)" }
                     return@remember null
                 }
-                if (progress.chapterHref != href) {
+                if (progress.session?.belongsTo(state.chapterId, state.mangaId) != true ||
+                    progress.chapterHref != href
+                ) {
                     logcat(LogPriority.WARN) {
                         "[EpubReaderActivity] tts-hl: href mismatch progress='${progress.chapterHref}' state='$href'"
                     }
@@ -490,7 +532,13 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 }
                 s
             }
-            LaunchedEffect(currentTtsSentence?.index, state.isReady, state.chapterId) {
+            LaunchedEffect(
+                currentTtsSentence,
+                state.ttsProgress?.session,
+                state.isReady,
+                state.chapterId,
+                followingManualPage,
+            ) {
                 logcat(LogPriority.INFO) {
                     "[EpubReaderActivity] tts-hl LaunchedEffect fired: " +
                         "idx=${currentTtsSentence?.index} isReady=${state.isReady} " +
@@ -500,7 +548,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                     return@LaunchedEffect
                 }
                 val sentence = currentTtsSentence
-                if (sentence == null) {
+                if (sentence == null || followingManualPage) {
                     runCatching { epubReaderFragment()?.clearSentenceHighlight() }
                     return@LaunchedEffect
                 }
@@ -509,11 +557,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
 
             // Phase 3 自动续播：TTS 章节自然播完 → 导航并续播下一章。
             LaunchedEffect(Unit) {
-                viewModel.ttsChapterCompleted.collect {
+                viewModel.ttsChapterCompleted.collect { session ->
                     logcat(LogPriority.INFO) {
                         "[EpubReaderActivity] tts chapter completed -> auto-advance"
                     }
-                    handleTtsChapterCompleted()
+                    handleTtsChapterCompleted(session)
                 }
             }
 
@@ -638,6 +686,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                             viewModel.restoreCurrentProgressDisplay()
                                             return@launch
                                         }
+                                        onManualReadingNavigation()
                                         viewModel.previewProgressionSeek(progression, locator)
                                         val accepted = epubReaderFragment()?.goTo(locator) == true
                                         logcat(LogPriority.DEBUG) {
@@ -678,16 +727,20 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                     activePanel = EpubBottomPanel.SETTINGS
                                 },
                                 onSearch = viewModel::openSearch,
+                                ttsPanelState = TtsPanelState(state.ttsActive, state.ttsPlaybackState),
+                                onTtsAction = { action ->
+                                    if (action == koharia.tts.TtsAction.STOP) {
+                                        ttsStartRequestId++
+                                        ttsPageFollow.cancel()
+                                        stoppedTtsSession = ttsProgressNotifier.progress.value.session
+                                    }
+                                    viewModel.onTtsAction(action)
+                                },
                                 onToggleTts = {
-                                    // Phase 3 step 1 修复(2)：用 notifier 派生的 state.ttsActive 判断，
-                                    // **不能**用 Activity 本地布尔。章节自然播完后 TtsService 会
-                                    // progressNotifier.clear() + stopSelf() 自我销毁，本地布尔不会复位，
-                                    // 于是下一次点击走进 stop 分支 = 真机"按播放没反应"（日志证据：
-                                    // 章节播完后再按，服务 started 后立即收到 STOP，偶发才会真正 start）。
-                                    // state.ttsActive 直接来自 TtsProgressNotifier.progress（source of truth）：
-                                    // 播放/暂停时 true；播完/停止 clear() 后 false。
                                     if (state.ttsActive) {
-                                        koharia.tts.TtsService.stop(this@EpubReaderActivity)
+                                        viewModel.onTtsAction(
+                                            TtsPanelState(true, state.ttsPlaybackState).playPauseAction,
+                                        )
                                     } else {
                                         // Phase 3 step 1 修复:Android 13+ 必须运行时授予 POST_NOTIFICATIONS,
                                         // 否则 TtsService 的前台通知 + MediaSession 锁屏卡片会被系统静默丢弃
@@ -844,22 +897,25 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                                         showChapterTitle = showReaderChapterTitle,
                                         showClock = showReaderClock,
                                         showBattery = showReaderBattery,
+                                        showPages = showReaderPages,
                                         position = readerStatusPosition,
-                                    )
-                                }
-
-                                // Phase 3.3: 阅读器内朗读控制 pill —— 上一句 / 播放-暂停 / 下一句
-                                if (state.ttsActive) {
-                                    TtsControlPanel(
-                                        panelState = TtsPanelState(
-                                            active = state.ttsActive,
-                                            playbackState = state.ttsPlaybackState,
-                                        ),
-                                        onAction = viewModel::onTtsAction,
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .navigationBarsPadding()
-                                            .padding(bottom = 16.dp),
+                                        edgeBandHeight = maxOf(
+                                            fullscreenVerticalPadding.value.takeIf { fullscreen } ?: 0f,
+                                            16f * resources.configuration.fontScale + 20f,
+                                        ).dp,
+                                        edgeInsets = when {
+                                            !fullscreen -> WindowInsets.systemBars
+                                            !drawUnderCutout -> WindowInsets.displayCutout
+                                            else -> WindowInsets(0, 0, 0, 0)
+                                        },
+                                        contentColor = if (androidx.core.graphics.ColorUtils.calculateLuminance(
+                                                currentTheme.readerBackgroundColor(currentCustomBackgroundColor),
+                                            ) > 0.5
+                                        ) {
+                                            Color.Black
+                                        } else {
+                                            Color.White
+                                        },
                                     )
                                 }
 
@@ -1120,6 +1176,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             return
         }
         isReaderResumed = false
+        ttsPageFollow.endDrag()
         paginationViewportJob?.cancel()
         paginationJob?.cancel()
         progressionSeekGeneration += 1
@@ -1172,6 +1229,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onDestroy() {
+        ttsPageFollow.cancel()
         if (configStartupDeferred) {
             super.onDestroy()
             return
@@ -1226,8 +1284,34 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         }
     }
 
+    private fun ttsPageLocation(): EpubTtsPageFollow.Location {
+        return viewModel.state.value.ttsPageFollowLocation(ttsVisiblePage, ttsResourceProgression)
+    }
+
+    override fun onManualReadingNavigation(dragging: Boolean) {
+        val session = ttsProgressNotifier.progress.value.session ?: return
+        if (!viewModel.isCurrentTtsSession(session) ||
+            viewModel.state.value.ttsPlaybackState == koharia.tts.TtsPlaybackState.STOPPED
+        ) {
+            return
+        }
+        ttsStartRequestId++
+        pendingTtsAdvanceTargetHref = null
+        pendingTtsAdvanceSession = null
+        pendingTtsAdvanceFallbackJob?.cancel()
+        pendingTtsAdvanceFallbackJob = null
+        ttsPageFollow.begin(session, ttsPageLocation(), dragging)
+    }
+
+    override fun onManualReadingDragEnded() {
+        ttsPageFollow.endDrag()
+    }
+
     override fun onLocatorChanged(locator: Locator) {
+        ttsResourceProgression = (locator.locations.progression as? Number)?.toDouble()
+            ?.let { locator.href.toString() to it }
         viewModel.updateLocator(locator)
+        ttsPageFollow.moved(ttsPageLocation())
         maybeFirePendingTtsAdvance(locator)
     }
 
@@ -1259,8 +1343,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
     }
 
     override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+        ttsVisiblePage = locator.href.toString() to pageIndex
+        ttsResourceProgression = (locator.locations.progression as? Number)?.toDouble()
+            ?.let { locator.href.toString() to it }
         viewModel.onFirstContentDisplayed()
         viewModel.updateVisualPage(pageIndex, totalPages, locator)
+        ttsPageFollow.moved(ttsPageLocation())
         displayRefreshHost.flash()
         lifecycleScope.launch {
             epubReaderFragment()?.currentTocHref(viewModel.tableOfContents().map { it.link })
@@ -1276,7 +1364,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         viewModel.updateBookPagination(generation, pageCounts, isComplete)
         if (isComplete && generation == viewModel.state.value.paginationGeneration) {
             viewModel.currentLocator()?.let { locator ->
-                epubReaderFragment()?.goTo(locator)
+                epubReaderFragment()?.goTo(locator, userInitiated = false)
             }
         }
     }
@@ -1365,7 +1453,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 lastTouchPositionTimeMs = SystemClock.elapsedRealtime()
             }
         }
-        return super.dispatchTouchEvent(event)
+        val handled = super.dispatchTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            ttsPageFollow.endDrag()
+        }
+        return handled
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -1575,7 +1667,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 if (!request.shouldScan &&
                     viewModel.state.value.paginationPhase != EpubPaginationPhase.UNAVAILABLE
                 ) {
-                    viewModel.currentLocator()?.let(activeFragment::goTo)
+                    viewModel.currentLocator()?.let { activeFragment.goTo(it, userInitiated = false) }
                 }
             }
         }
@@ -1660,7 +1752,13 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
      * 起播文本仍由 WebView [EpubReaderFragment.extractTtsTextModel] 提取，
      * 与高亮 JS tree walker 同源，避免 Service 侧 Jsoup 文本偏移漂移。
      */
-    private fun handleTtsChapterCompleted() {
+    private fun handleTtsChapterCompleted(session: TtsProgressNotifier.Session) {
+        if (ttsPageFollow.deferCompletion(session)) return
+        if (stoppedTtsSession == session ||
+            !viewModel.isCurrentTtsSession(session)
+        ) {
+            return
+        }
         val state = viewModel.state.value
         // 守卫：只续播"刚播完的那一章"的下一章。若用户在播放期间滚动/跳到了别的章节，
         // 播放章节 != 当前显示章节，此时续播会错位 —— 直接跳过。
@@ -1687,9 +1785,11 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
             "[EpubReaderActivity] tts auto-advance -> '$target' (from '$current')"
         }
         pendingTtsAdvanceTargetHref = target
+        pendingTtsAdvanceSession = session
+        pendingTtsAdvanceRequestId = ttsStartRequestId
         // 同一资源内的锚点跳转不会改变 href，只能靠超时兜底。
         pendingTtsAdvanceMatchByHref = !sameResourceHref(target, current)
-        epubReaderFragment()?.goTo(next)
+        epubReaderFragment()?.goTo(next, userInitiated = false)
         pendingTtsAdvanceFallbackJob?.cancel()
         pendingTtsAdvanceFallbackJob = lifecycleScope.launch {
             delay(TTS_AUTO_ADVANCE_FALLBACK_MS)
@@ -1712,11 +1812,16 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
      */
     private fun firePendingTtsAdvance() {
         val target = pendingTtsAdvanceTargetHref ?: return
+        val session = pendingTtsAdvanceSession ?: return
+        val requestId = pendingTtsAdvanceRequestId
         pendingTtsAdvanceTargetHref = null
+        pendingTtsAdvanceSession = null
         pendingTtsAdvanceFallbackJob?.cancel()
         pendingTtsAdvanceFallbackJob = null
         val current = viewModel.state.value.currentHref.orEmpty()
-        if (!sameResourceHref(current, target)) {
+        if (requestId != ttsStartRequestId || !viewModel.isCurrentTtsSession(session) ||
+            !sameResourceHref(current, target)
+        ) {
             logcat(LogPriority.WARN) {
                 "[EpubReaderActivity] tts auto-advance aborted: current '$current' != target '$target'"
             }
@@ -1724,25 +1829,40 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         }
         lifecycleScope.launch {
             delay(TTS_AUTO_ADVANCE_SETTLE_MS)
-            startTtsFromCurrentViewport()
+            if (requestId == ttsStartRequestId && viewModel.isCurrentTtsSession(session) &&
+                sameResourceHref(viewModel.state.value.currentHref.orEmpty(), target)
+            ) {
+                startTtsFromCurrentViewport(session)
+            }
         }
     }
 
     /** 从当前视口起播 TTS（手动播放按钮 / 自动续播共用）。 */
-    private fun startTtsFromCurrentViewport() {
+    private fun startTtsFromCurrentViewport(expectedSession: TtsProgressNotifier.Session? = null): Job? {
         val state = viewModel.state.value
+        if (!state.isReady || state.chapterId <= 0 || state.mangaId <= 0) return null
+        val requestId = ++ttsStartRequestId
         val ttsChapterId = state.chapterId
         val ttsMangaId = state.mangaId
         val ttsHref = state.currentHref.orEmpty()
+        val viewport = ttsPageLocation()
         val ttsProgression = viewModel.ttsStartProgression()
         val ttsAnchor = viewModel.ttsStartAnchor()
-        lifecycleScope.launch {
+        return lifecycleScope.launch {
             val fragment = epubReaderFragment()
             // Phase 2.5a fast-path：一次 JS 调用拿到章节文本 + 视口顶部字符偏移。
             // 文本与高亮 JS tree walker 同源 → 高亮不偏移；
             // 偏移与句子同空间 → 起播精确（不依赖可能滞后的 progression）。
             // 拿不到再降级给 TtsService 内部 ChapterTextExtractor + 进度。
             val model = fragment?.extractTtsTextModel()
+            val current = viewModel.state.value
+            if (requestId != ttsStartRequestId || current.chapterId != ttsChapterId || current.mangaId != ttsMangaId ||
+                viewport != ttsPageLocation() ||
+                !sameResourceHref(current.currentHref.orEmpty(), ttsHref) ||
+                (expectedSession != null && !viewModel.isCurrentTtsSession(expectedSession))
+            ) {
+                return@launch
+            }
             // 只记录长度 / 节点数 / 偏移，不打印正文片段（release 最低日志级别为 INFO）。
             logcat(LogPriority.INFO) {
                 "[EpubReaderActivity] tts text model " +
@@ -1769,6 +1889,7 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 anchorIsBefore = model == null && (ttsAnchor?.second ?: false),
                 startOffset = model?.startOffset ?: -1,
                 textToken = textToken,
+                expectedSessionToken = expectedSession?.token,
             )
         }
     }
@@ -1883,6 +2004,12 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         customBackgroundColor: Int,
         verticalMargins: Float,
     ) {
+        val statusVisible by readerPreferences.showPageNumber.changes().collectAsState(
+            readerPreferences.showPageNumber.get(),
+        )
+        val statusPosition by readerPreferences.readerStatusPosition.changes().collectAsState(
+            readerPreferences.readerStatusPosition.get(),
+        )
         key(chapterId, sessionToken) {
             val arguments = remember(chapterId, sourceId) {
                 EpubReaderFragment.createArguments(chapterId, sourceId)
@@ -1918,6 +2045,8 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
                 theme,
                 customBackgroundColor,
                 verticalMargins,
+                statusVisible,
+                statusPosition,
             ) {
                 readerFragment?.updateImageColorPolicy(
                     preserveImageColors = preserveImageColors,
@@ -2032,11 +2161,21 @@ class EpubReaderActivity : BaseActivity(), EpubReaderFragment.Host {
         } else {
             0
         }
+        val statusPadding = if (readerPreferences.showPageNumber.get()) {
+            maxOf(
+                verticalPadding,
+                ((16f * resources.configuration.fontScale + 20f) * resources.displayMetrics.density).roundToInt(),
+            )
+        } else {
+            verticalPadding
+        }
+        val statusAtTop = readerPreferences.readerStatusPosition.get() ==
+            eu.kanade.tachiyomi.ui.reader.setting.ReaderStatusPosition.TOP
         setPadding(
             horizontalInsets.left,
-            topInset + verticalPadding,
+            topInset + if (statusAtTop) statusPadding else verticalPadding,
             horizontalInsets.right,
-            bottomInset + verticalPadding,
+            bottomInset + if (statusAtTop) verticalPadding else statusPadding,
         )
     }
 

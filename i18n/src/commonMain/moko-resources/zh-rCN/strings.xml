@@ -219,6 +219,9 @@
     <string name="reader_status_show_battery">显示电量</string>
     <string name="reader_buffering_speed">缓冲 %1$s</string>
     <string name="reader_buffering_waiting">正在缓冲…</string>
+    <string name="reader_battery_level">电量 %1$d%%</string>
+    <string name="reader_status_show_pages">显示页数信息</string>
+    <string name="reader_battery_charging">正在充电，%1$d%%</string>
     <string name="reader_read_aloud">朗读</string>
     <string name="reader_toolbar_settings">底部控制条</string>
     <string name="comic_reader_toolbar_settings">漫画阅读器控制条</string>
@@ -230,9 +233,6 @@
     <string name="connection_set_active">设为当前库</string>
     <string name="pref_auto_check_app_updates">自动检查更新</string>
     <string name="pref_show_update_reminders">显示更新提醒</string>
-    <string name="komga_chapter_title_mode">详情页标题文字</string>
-    <string name="komga_chapter_title_formatted">格式化标题</string>
-    <string name="komga_chapter_title_source">仅图源标题</string>
     <string name="entry_open_group">作品打开方式</string>
     <string name="pref_epub_image_display">图片显示</string>
     <string name="pref_project_information">项目信息</string>
@@ -490,15 +490,15 @@
     <string name="tts_voice_lang_en">英文</string>
     <string name="tts_voice_engine_hint">引擎：%1$s</string>
 
-    <string name="tts_engine_settings_title">TTS 引擎</string>
-    <string name="tts_engine_section">厂商</string>
+    <string name="tts_engine_settings_title">语音朗读</string>
+    <string name="tts_engine_section">语音引擎</string>
     <string name="tts_engine_vendor_requires_key">需要 API key</string>
     <string name="tts_engine_vendor_free">无需 API key</string>
     <string name="tts_engine_api_key_label">API key</string>
     <string name="tts_engine_api_key_hint">在本机加密保存</string>
     <string name="tts_engine_status_ok">已配置</string>
     <string name="tts_engine_status_missing">未配置 — TTS 无法工作</string>
-    <string name="tts_engine_get_api_key">获取 key</string>
+    <string name="tts_engine_get_api_key">如何获取 API key</string>
     <string name="tts_engine_voice_section">音色</string>
     <string name="tts_engine_voice_summary">在朗读设置中切换音色</string>
     <string name="tts_engine_open_settings">TTS 引擎设置</string>
@@ -506,8 +506,8 @@
     <string name="tts_data_disclosure_title">开始朗读前请知悉</string>
     <string name="tts_data_disclosure_body">为合成语音，当前章节正文会发送至 %1$s。你的阅读内容将离开本设备。如不希望如此，可在「TTS 引擎设置」中更换厂商。</string>
     <string name="tts_data_disclosure_ack">我知道了</string>
-    <string name="tts_data_disclosure_settings_card_title">数据披露</string>
-    <string name="tts_data_disclosure_settings_card_body">章节正文会上传至 %1$s 以生成语音，其余内容不会发送。可在上方切换厂商以更改接收方。</string>
+    <string name="tts_data_disclosure_settings_card_title">朗读与隐私</string>
+    <string name="tts_data_disclosure_settings_card_body">朗读时，章节正文会发送至 %1$s 生成语音。其余内容不会发送，切换语音引擎可更改接收方。</string>
     <string name="tts_legacy_key_notice_title">需要重新填写 API key</string>
     <string name="tts_legacy_key_notice_body">密钥存储已升级为系统密钥库，旧版本保存的 key 无法解密，请重新粘贴一次。</string>
     <string name="action_sort_latest_chapter">作品更新时间</string>
@@ -1685,4 +1685,11 @@
     <string name="shared_config_choose_message">请选择用于所有库的配置。各库内容、筛选和服务器设置保持原样。</string>
     <string name="shared_config_previous">原共享配置</string>
     <string name="shared_config_failed">配置保存失败，请重试。</string>
+    <string name="show_original_file_name">原始文件名</string>
+    <string name="tts_engine_show_api_key">显示 API 密钥</string>
+    <string name="tts_engine_hide_api_key">隐藏 API 密钥</string>
+    <string name="tts_action_stop">停止朗读</string>
+    <string name="tts_playback_settings">声音</string>
+    <string name="tts_full_settings">完整朗读设置</string>
+    <string name="tts_quick_settings">返回快捷设置</string>
 </resources>

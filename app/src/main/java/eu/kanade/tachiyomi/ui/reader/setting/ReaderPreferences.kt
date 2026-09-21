@@ -49,7 +49,7 @@ class ReaderPreferences(
 
     val doubleTapAnimSpeed: Preference<Int> = preferenceStore.getInt("pref_double_tap_anim_speed", 500)
 
-    val showPageNumber: Preference<Boolean> = preferenceStore.getBoolean("pref_show_page_number_key", false)
+    val showPageNumber: Preference<Boolean> = preferenceStore.getBoolean("pref_show_page_number_key", true)
 
     val readerStatusPosition: Preference<ReaderStatusPosition> = preferenceStore.getEnum(
         "reader_status_position",
@@ -62,6 +62,7 @@ class ReaderPreferences(
     val showReaderClock: Preference<Boolean> = preferenceStore.getBoolean("reader_status_show_clock", true)
 
     val showReaderBattery: Preference<Boolean> = preferenceStore.getBoolean("reader_status_show_battery", true)
+    val showReaderPages: Preference<Boolean> = preferenceStore.getBoolean("reader_status_show_pages", true)
 
     val showBufferingSpeed: Preference<Boolean> = preferenceStore.getBoolean("pref_show_buffering_speed", true)
 

@@ -30,6 +30,7 @@ object KomgaChapterMemo {
     const val SERIES_TITLE = "seriesTitle"
     const val BOOK_TITLE = "bookTitle"
     const val NUMBER_SORT = "numberSort"
+    const val NUMBER = "number"
     const val ISBN = "isbn"
     const val IS_EPUB = "isEpub"
     const val MEDIA_PROFILE = "mediaProfile"
@@ -72,6 +73,7 @@ object KomgaChapterMemo {
             put(EPUB_DIVINA_COMPATIBLE, book.media.epubDivinaCompatible)
             if (book.fileLastModified.isNotBlank()) put(FILE_LAST_MODIFIED, book.fileLastModified)
             if (book.name.isNotBlank()) put(FILE_NAME, book.name)
+            if (book.metadata.number.isNotBlank()) put(NUMBER, book.metadata.number)
             if (book.media.pagesCount > 0) put(PAGES_COUNT, book.media.pagesCount)
             if (book.libraryId.isNotBlank()) put(LIBRARY_ID, book.libraryId)
         }
@@ -198,6 +200,8 @@ object KomgaChapterMemo {
     fun fileLastModified(memo: JsonObject): String? = memo.string(FILE_LAST_MODIFIED)
 
     fun fileName(memo: JsonObject): String? = memo.string(FILE_NAME)
+
+    fun number(memo: JsonObject): String? = memo.string(NUMBER)
 
     fun sizeBytes(memo: JsonObject): Long? = memo.long(SIZE_BYTES)?.takeIf { it > 0L }
 

@@ -38,15 +38,15 @@
     <string name="tts_voice_lang_en">English</string>
     <string name="tts_voice_engine_hint">Engine: %1$s</string>
 
-    <string name="tts_engine_settings_title">TTS engine</string>
-    <string name="tts_engine_section">Vendor</string>
+    <string name="tts_engine_settings_title">Read aloud</string>
+    <string name="tts_engine_section">Speech engine</string>
     <string name="tts_engine_vendor_requires_key">Requires API key</string>
     <string name="tts_engine_vendor_free">No API key required</string>
     <string name="tts_engine_api_key_label">API key</string>
     <string name="tts_engine_api_key_hint">Encrypted on this device</string>
     <string name="tts_engine_status_ok">Configured</string>
     <string name="tts_engine_status_missing">Not configured — TTS won\'t work</string>
-    <string name="tts_engine_get_api_key">Get key</string>
+    <string name="tts_engine_get_api_key">How to get an API key</string>
     <string name="tts_engine_voice_section">Voice</string>
     <string name="tts_engine_voice_summary">Configure voices in Reading settings</string>
     <string name="tts_engine_open_settings">TTS engine settings</string>
@@ -605,6 +605,9 @@
     <string name="reader_status_show_battery">Show battery</string>
     <string name="reader_buffering_speed">Buffering %1$s</string>
     <string name="reader_buffering_waiting">Buffering…</string>
+    <string name="reader_battery_level">Battery %1$d%%</string>
+    <string name="reader_status_show_pages">Show page information</string>
+    <string name="reader_battery_charging">Charging, %1$d%%</string>
     <string name="reader_read_aloud">Read aloud</string>
     <string name="reader_toolbar_settings">Bottom toolbar</string>
     <string name="comic_reader_toolbar_settings">Comic reader toolbar</string>
@@ -616,9 +619,6 @@
     <string name="connection_set_active">Set as active</string>
     <string name="pref_auto_check_app_updates">Automatically check for updates</string>
     <string name="pref_show_update_reminders">Show update reminders</string>
-    <string name="komga_chapter_title_mode">Details chapter title</string>
-    <string name="komga_chapter_title_formatted">Formatted title</string>
-    <string name="komga_chapter_title_source">Source title only</string>
     <string name="entry_open_group">Entry opening</string>
     <string name="pref_epub_image_display">Image display</string>
     <string name="pref_project_information">Project information</string>
@@ -1824,4 +1824,11 @@
     <string name="shared_config_choose_message">Choose which existing settings to use for all libraries. Library contents, filters and server settings will stay unchanged.</string>
     <string name="shared_config_previous">Previous shared settings</string>
     <string name="shared_config_failed">Could not save settings. Please try again.</string>
+    <string name="show_original_file_name">Original filename</string>
+    <string name="tts_engine_show_api_key">Show API key</string>
+    <string name="tts_engine_hide_api_key">Hide API key</string>
+    <string name="tts_action_stop">Stop reading aloud</string>
+    <string name="tts_playback_settings">Voice</string>
+    <string name="tts_full_settings">All read-aloud settings</string>
+    <string name="tts_quick_settings">Back to quick settings</string>
 </resources>

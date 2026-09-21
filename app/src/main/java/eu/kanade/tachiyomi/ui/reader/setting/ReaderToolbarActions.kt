@@ -33,6 +33,7 @@ internal object ReaderToolbarActions {
     val defaultEpub = listOf(
         EpubReaderToolbarAction.CONTENTS,
         EpubReaderToolbarAction.NIGHT_MODE,
+        EpubReaderToolbarAction.TTS,
         EpubReaderToolbarAction.MORE,
     )
 

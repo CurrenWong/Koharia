@@ -483,6 +483,9 @@ class ReaderActivity : BaseActivity() {
         val showReaderChapterTitle by readerPreferences.showReaderChapterTitle.collectAsState()
         val showReaderClock by readerPreferences.showReaderClock.collectAsState()
         val showReaderBattery by readerPreferences.showReaderBattery.collectAsState()
+        val showReaderPages by readerPreferences.showReaderPages.collectAsState()
+        val statusReaderTheme by readerPreferences.readerTheme.collectAsState()
+        val statusCustomBackground by readerPreferences.readerCustomBackgroundColor.collectAsState()
         val bufferingFlow = state.currentChapter?.pageLoader?.bufferingState ?: EmptyReaderBufferingState
         val buffering by bufferingFlow.collectAsState()
         val activeComicPanel = remember { mutableStateOf(ComicBottomPanel.NONE) }
@@ -512,7 +515,14 @@ class ReaderActivity : BaseActivity() {
 
             if (!state.menuVisible && showPageNumber) {
                 ReaderStatusIndicator(
-                    chapterTitle = state.currentChapter?.chapter?.name,
+                    chapterTitle = state.currentChapter?.chapter?.let {
+                        (viewModel.getSource() as? koharia.connection.ConnectionChapterTitleAdapter)
+                            ?.detailsChapterTitle(it.memo)
+                            ?: koharia.connection.ConnectionChapterMetadata.removeTrailingEmbeddedFileSize(
+                                it.name,
+                                it.memo,
+                            )
+                    },
                     currentPage = state.visiblePageEnd.takeIf { it > 0 } ?: state.currentPage,
                     totalPages = state.totalPages,
                     visiblePageStart = state.visiblePageStart,
@@ -520,7 +530,19 @@ class ReaderActivity : BaseActivity() {
                     showChapterTitle = showReaderChapterTitle,
                     showClock = showReaderClock,
                     showBattery = showReaderBattery,
+                    showPages = showReaderPages,
                     position = readerStatusPosition,
+                    contentColor = when (statusReaderTheme) {
+                        0 -> androidx.compose.ui.graphics.Color.Black
+                        3 -> androidx.compose.material3.MaterialTheme.colorScheme.onBackground
+                        ReaderPreferences.CUSTOM_BACKGROUND_THEME ->
+                            if (androidx.core.graphics.ColorUtils.calculateLuminance(statusCustomBackground) > 0.5) {
+                                androidx.compose.ui.graphics.Color.Black
+                            } else {
+                                androidx.compose.ui.graphics.Color.White
+                            }
+                        else -> androidx.compose.ui.graphics.Color.White
+                    },
                 )
             }
 
@@ -876,7 +898,14 @@ class ReaderActivity : BaseActivity() {
             visible = state.menuVisible,
 
             mangaTitle = state.manga?.title,
-            chapterTitle = state.currentChapter?.chapter?.name,
+            chapterTitle = state.currentChapter?.chapter?.let {
+                (viewModel.getSource() as? koharia.connection.ConnectionChapterTitleAdapter)
+                    ?.detailsChapterTitle(it.memo)
+                    ?: koharia.connection.ConnectionChapterMetadata.removeTrailingEmbeddedFileSize(
+                        it.name,
+                        it.memo,
+                    )
+            },
             navigateUp = onBackPressedDispatcher::onBackPressed,
             onClickTopAppBar = ::openMangaScreen,
             bookmarked = state.bookmarked,

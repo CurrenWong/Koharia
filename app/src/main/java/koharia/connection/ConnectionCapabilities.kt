@@ -411,6 +411,10 @@ interface ConnectionReadStatusAdapter {
 /** Optional provider-specific chapter title selected for the details screen. */
 interface ConnectionChapterTitleAdapter {
     fun detailsChapterTitle(chapterMemo: JsonObject): String?
+
+    fun detailsChapterNumber(chapterMemo: JsonObject): String? = null
+
+    fun detailsChapterFileName(chapterMemo: JsonObject): String? = null
 }
 
 interface ConnectionHistorySyncAdapter {

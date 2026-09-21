@@ -38,7 +38,7 @@ class TtsPreferencesTest {
 
     @Test
     fun `voiceIdFor defaults to the vendor default when pref unset`() {
-        preferences().voiceIdFor("mimo").get() shouldBe TtsPreferences.DEFAULT_VOICE_ID
+        preferences().voiceIdFor("mimo").get() shouldBe MimoEngine.DEFAULT_VOICE_ID
         preferences().voiceIdFor("edge").get() shouldBe EdgeEngine.DEFAULT_VOICE_ID
     }
 
@@ -57,7 +57,7 @@ class TtsPreferencesTest {
 
         prefs.voiceIdFor().get() shouldBe "zh-CN-YunxiNeural"
         // 写进了 edge 槽位,mimo 槽位不受影响
-        prefs.voiceIdFor("mimo").get() shouldBe TtsPreferences.DEFAULT_VOICE_ID
+        prefs.voiceIdFor("mimo").get() shouldBe MimoEngine.DEFAULT_VOICE_ID
     }
 
     @Test
@@ -111,7 +111,7 @@ class TtsPreferencesTest {
         val prefs = TtsPreferences(store)
 
         prefs.voiceIdFor("edge").get() shouldBe "zh-CN-YunxiNeural"
-        prefs.voiceIdFor("mimo").get() shouldBe TtsPreferences.DEFAULT_VOICE_ID
+        prefs.voiceIdFor("mimo").get() shouldBe MimoEngine.DEFAULT_VOICE_ID
     }
 
     @Test
@@ -122,7 +122,7 @@ class TtsPreferencesTest {
 
         val prefs = TtsPreferences(store)
 
-        prefs.voiceIdFor("mimo").get() shouldBe TtsPreferences.DEFAULT_VOICE_ID
+        prefs.voiceIdFor("mimo").get() shouldBe MimoEngine.DEFAULT_VOICE_ID
         prefs.voiceIdFor("edge").get() shouldBe EdgeEngine.DEFAULT_VOICE_ID
     }
 
@@ -130,13 +130,15 @@ class TtsPreferencesTest {
     fun `absent legacy key leaves every vendor slot at its default`() {
         val prefs = preferences()
 
-        prefs.voiceIdFor("mimo").get() shouldBe TtsPreferences.DEFAULT_VOICE_ID
+        prefs.voiceIdFor("mimo").get() shouldBe MimoEngine.DEFAULT_VOICE_ID
         prefs.voiceIdFor("edge").get() shouldBe EdgeEngine.DEFAULT_VOICE_ID
     }
 
     @Test
     fun `validVoiceIds contains all 8 preset voices from MimoEngine PRESET_VOICES`() {
-        val ids = preferences().validVoiceIds()
+        val prefs = preferences()
+        prefs.vendorId.set("mimo")
+        val ids = prefs.validVoiceIds()
         setOf("冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean") shouldBe ids
     }
 
@@ -144,14 +146,36 @@ class TtsPreferencesTest {
     fun `validVoiceIds stays in sync with MimoEngine PRESET_VOICES`() {
         // 防回归：如果将来 PRESET_VOICES 加了/删了音色,确保 VALID_VOICE_IDS 也跟着变。
         val fromEngine = MimoEngine.PRESET_VOICES.mapTo(mutableSetOf()) { it.id }
-        preferences().validVoiceIds() shouldBe fromEngine
+        val prefs = preferences()
+        prefs.vendorId.set("mimo")
+        prefs.validVoiceIds() shouldBe fromEngine
     }
 
     // ===== Phase 4: vendor 偏好 =====
 
     @Test
-    fun `vendorId defaults to mimo`() {
-        preferences().vendorId.get() shouldBe TtsPreferences.DEFAULT_VENDOR_ID
+    fun `new preferences default to Edge with a matching voice`() {
+        val prefs = preferences()
+        prefs.vendorId.get() shouldBe "edge"
+        TtsVendor.DEFAULT shouldBe TtsVendor.Edge
+        TtsPreferences.DEFAULT_VENDOR_ID shouldBe TtsVendor.DEFAULT.id
+        TtsPreferences.DEFAULT_VOICE_ID shouldBe TtsVendor.Edge.defaultVoiceId()
+        prefs.voiceIdFor().get() shouldBe TtsVendor.Edge.defaultVoiceId()
+    }
+
+    @Test
+    fun `existing explicit vendor and voice choices survive the new default`() {
+        val store = InMemoryPreferenceStore(
+            sequenceOf(
+                InMemoryPreferenceStore.InMemoryPreference("tts_vendor_id", "mimo", ""),
+                InMemoryPreferenceStore.InMemoryPreference("tts_voice_id_mimo", "Mia", ""),
+            ),
+        )
+
+        val prefs = TtsPreferences(store)
+
+        prefs.vendorId.get() shouldBe "mimo"
+        prefs.voiceIdFor().get() shouldBe "Mia"
     }
 
     @Test
@@ -175,7 +199,7 @@ class TtsPreferencesTest {
     @Test
     fun `validVoiceIds dynamically reflects vendor switch without restart`() {
         val prefs = preferences()
-        // 默认 vendor = mimo: 看到 8 个 MiMo 音色
+        prefs.vendorId.set("mimo")
         prefs.validVoiceIds().size shouldBe MimoEngine.PRESET_VOICES.size
         // 切到 edge: 看到 6 个 Edge 音色
         prefs.vendorId.set("edge")

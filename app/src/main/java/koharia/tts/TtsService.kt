@@ -17,6 +17,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import koharia.tts.player.TtsPlayer
+import koharia.tts.progress.TtsProgressNotifier
 import koharia.tts.progress.TtsProgressRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
@@ -33,7 +34,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -44,6 +48,7 @@ import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.CoroutineContext
 import androidx.media.app.NotificationCompat as MediaAppNotificationCompat
@@ -208,7 +213,7 @@ class TtsService : Service(), CoroutineScope {
     private val securePreferences: TtsSecurePreferences by lazy { Injekt.get() }
 
     /**
-     * Phase 4:当前 TTS 引擎。**[observeVendorPreference] 在 vendorId 变化时重建**;
+     * Phase 4:当前 TTS 引擎。**[observeSynthesisPreferences] 在 vendorId 变化时重建**;
      * key / baseUrl 变化不重建(provider lambda 每次重新读)。
      *
      * [engine] 是只读 getter,内部代码照常引用 `engine.xxx`,不必感知重建。
@@ -327,6 +332,9 @@ class TtsService : Service(), CoroutineScope {
      */
     private var completionStopJob: Job? = null
 
+    // Accessed under controlMutex; completed chapters must not restart when settings change.
+    private var completionPending = false
+
     /**
      * 实例视图 = companion [_playbackState]（进程级）。这是 getter/setter 代理 —
      * 让原有 `playbackUiState` 读写代码 (`resume`/`pause`/`buildNotification` 等)
@@ -361,12 +369,11 @@ class TtsService : Service(), CoroutineScope {
         super.onCreate()
         ensureChannel()
         initMediaSession()
-        // Phase 4:必须在 observeXxxPreference 之前构造引擎,observeVendorPreference
+        // Phase 4:必须在 observeXxxPreference 之前构造引擎,observeSynthesisPreferences
         // 才会读到一个稳定的 currentEngine。
         currentEngine = createEngine()
         observeSpeedPreference()
-        observeVoicePreference()
-        observeVendorPreference()
+        observeSynthesisPreferences()
     }
 
     /**
@@ -389,78 +396,47 @@ class TtsService : Service(), CoroutineScope {
         }
     }
 
-    /**
-     * Phase 3 step 3：监听朗读音色偏好，写入 companion `_voice`。
-     *
-     * **仅影响下一段播放**：本函数只更新 companion 状态，不重建飞行中的 SentencePrefetcher。
-     * 原因：[SentencePrefetcher] 的缓存键含 voice，改变会令已合成音频失效。
-     * 下次 `startPlayback` 读 `_voice.value` 构造新 prefetcher，新音色生效。
-     *
-     * v0.4.2-63：音色改为 **per-vendor** 存储（[TtsPreferences.voiceIdFor]），因此这里用
-     * `flatMapLatest` 跟随 `vendorId` —— 切 vendor 时自动改订阅新 vendor 的槽位。
-     * `AndroidPreference.changes()` 的 `onStart { emit("ignition") }` 保证**重订阅后立刻
-     * 吐出该 vendor 的当前值**，不会残留上一个 vendor 的非法 id。
-     *
-     * 非法值仍回落到**该 vendor 的** [TtsVendor.defaultVoiceId]（不再写死冰糖）：
-     * 防手改 prefs XML / 跨版本迁移异常。
-     */
-    private fun observeVoicePreference() {
+    private var activeEngineId: String? = null
+    private var activeVoiceId: String? = null
+
+    /** Apply engine and voice together, then replace queued audio at the current sentence. */
+    private fun observeSynthesisPreferences() {
         launch {
             ttsPreferences.vendorId.changes()
-                .flatMapLatest { vendorId -> ttsPreferences.voiceIdFor(vendorId).changes() }
-                .collect { id ->
-                    val currentVendorNow = TtsVendor.fromId(ttsPreferences.vendorId.get())
-                    val validIdsNow = currentVendorNow.presetVoices().map { it.id }.toSet()
-                    val valid = if (id in validIdsNow) {
-                        id
-                    } else {
-                        logcat(LogPriority.WARN) {
-                            "[TtsService] unknown voice id '$id' for vendor '${currentVendorNow.id}', " +
-                                "fallback to ${currentVendorNow.defaultVoiceId()}"
+                .flatMapLatest { vendorId ->
+                    ttsPreferences.voiceIdFor(vendorId).changes().map { vendorId to it }
+                }
+                .distinctUntilChanged()
+                .collect { (vendorId, voiceId) ->
+                    dispatchControl("synthesis-settings") {
+                        // A newer selection may already be waiting in the control queue.
+                        if (ttsPreferences.vendorId.get() != vendorId ||
+                            ttsPreferences.voiceIdFor(vendorId).get() != voiceId
+                        ) {
+                            return@dispatchControl
                         }
-                        currentVendorNow.defaultVoiceId()
-                    }
-                    if (valid != _voice.value) {
-                        logcat(LogPriority.INFO) {
-                            "[TtsService] voice preference -> $valid (vendor=${currentVendorNow.id})"
+                        val vendor = TtsVendor.fromId(vendorId)
+                        val selectedEngine = if (engine.engineId == vendor.id) {
+                            engine
+                        } else {
+                            vendor.createEngine(
+                                apiKeyLookup = { securePreferences.getApiKey(vendor.id) },
+                                baseUrlLookup = { securePreferences.getBaseUrl(vendor.id) },
+                            )
                         }
-                        _voice.value = valid
+                        if (!selectedEngine.isConfigured()) return@dispatchControl
+                        val selectedVoice = voiceId.takeIf { id -> vendor.presetVoices().any { it.id == id } }
+                            ?: vendor.defaultVoiceId()
+                        if (engine !== selectedEngine) rebuildEngine(selectedEngine)
+                        _voice.value = selectedVoice
+                        if (!completionPending && playbackJob?.isActive == true &&
+                            playbackUiState != TtsPlaybackState.STOPPED && lastPlaybackArgs != null &&
+                            (activeEngineId != vendor.id || activeVoiceId != selectedVoice)
+                        ) {
+                            skipTo(currentSentenceIndex.coerceAtLeast(0), preservePause = true)
+                        }
                     }
                 }
-        }
-    }
-
-    /**
-     * Phase 4:监听 vendorId 变化,重建引擎。
-     *
-     * 设计要点:
-     *  - vendorId 改变 → 立即重建(引擎类型变化,MimoEngine vs EdgeEngine);
-     *  - vendor 的 API key 改变 → **不重建**(MimoEngine.apiKeyProvider 是 lambda,
-     *    下次 synthesize 重新读 securePrefs);
-     *  - 新引擎未配置(用户切到 MiMo 但还没填 key)→ **保留旧引擎**,只 WARN 日志;
-     *  - v0.4.2-63:**不再重置 voice** —— 音色已按 vendor 分槽存储
-     *    ([TtsPreferences.voiceIdFor]),每个槽位要么是用户自己选过的合法值,要么未设置
-     *    (落到该 vendor 的 [TtsVendor.defaultVoiceId]),天然合法。
-     *    旧实现的"非法则 reset 成 default"在新结构下等于把默认值写进空槽,是空操作,
-     *    还会误导读者以为必须 reset。`_voice` 的更新由 [observeVoicePreference] 负责。
-     */
-    private fun observeVendorPreference() {
-        launch {
-            ttsPreferences.vendorId.changes().collect { newVendorId ->
-                val newVendor = TtsVendor.fromId(newVendorId)
-                val newEngine = newVendor.createEngine(
-                    apiKeyLookup = { securePreferences.getApiKey(newVendorId) },
-                    baseUrlLookup = { securePreferences.getBaseUrl(newVendorId) },
-                )
-                if (newEngine.isConfigured()) {
-                    rebuildEngine(newEngine)
-                } else {
-                    logcat(LogPriority.WARN) {
-                        "[TtsService] vendor '${newVendor.displayName}' not configured " +
-                            "(missing API key?), keeping ${currentEngine.engineId}"
-                    }
-                }
-            }
         }
     }
 
@@ -656,7 +632,15 @@ class TtsService : Service(), CoroutineScope {
                 // 正文经进程内 [TtsChapterTextStore] 传递：Intent 里只放短 token，
                 // 这里用 token 一次性取回正文（取出即移除）。
                 val extractedText = intent?.getStringExtra(EXTRA_TEXT_TOKEN)?.let(chapterTextStore::take)
+                val expectedSessionToken = intent?.getStringExtra(EXTRA_EXPECTED_SESSION_TOKEN)
                 dispatchControl("start") {
+                    if (expectedSessionToken != null &&
+                        progressNotifier.progress.value.session?.token != expectedSessionToken
+                    ) {
+                        // A queued follow must never undo STOP or replace a newer session.
+                        if (progressNotifier.progress.value.session == null) stopSelf()
+                        return@dispatchControl
+                    }
                     startPlayback(
                         chapterId = chapterId,
                         mangaId = mangaId,
@@ -697,6 +681,7 @@ class TtsService : Service(), CoroutineScope {
                 "anchorBefore=$anchorIsBefore persisted=${persistedSentenceText != null} " +
                 "preExtracted=${extractedText != null}(len=${extractedText?.length ?: -1})"
         }
+        completionPending = false
         // 有新的 start 接管（含自动续播）：先取消"自然播完兜底自毁"。
         completionStopJob?.cancel()
         completionStopJob = null
@@ -749,6 +734,13 @@ class TtsService : Service(), CoroutineScope {
         // [CoroutineStart.UNDISPATCHED] 强制 block 在调用线程立刻进入 —— 这是
         // Phase 2.5 早期"launch 不调度"症状的针对性防御（当时绕开用 raw Thread + runBlocking），
         // 现在用 UNDISPATCHED 显式保证调度,不再需要裸线程。
+        val playbackEngine = engine
+        val vendor = TtsVendor.fromId(playbackEngine.engineId)
+        val playbackVoice = ttsPreferences.voiceIdFor(vendor.id).get()
+            .takeIf { id -> vendor.presetVoices().any { it.id == id } } ?: vendor.defaultVoiceId()
+        activeEngineId = vendor.id
+        activeVoiceId = playbackVoice
+        _voice.value = playbackVoice
         playbackJob = playbackScope.launch(start = CoroutineStart.UNDISPATCHED) {
             logcat(LogPriority.INFO) { "[TtsService] runPlaybackJob ENTER (coroutine start)" }
             try {
@@ -762,6 +754,8 @@ class TtsService : Service(), CoroutineScope {
                     startOffset = startOffset,
                     persistedSentenceText = persistedSentenceText,
                     extractedText = extractedText,
+                    playbackEngine = playbackEngine,
+                    playbackVoice = playbackVoice,
                 )
             } catch (e: CancellationException) {
                 logcat(LogPriority.INFO) { "[TtsService] runPlaybackJob cancelled (normal stop)" }
@@ -794,7 +788,11 @@ class TtsService : Service(), CoroutineScope {
         startOffset: Int,
         persistedSentenceText: String?,
         extractedText: String?,
+        playbackEngine: TtsEngine,
+        playbackVoice: String,
     ) {
+        val session = TtsProgressNotifier.Session(chapterId, mangaId, UUID.randomUUID().toString())
+        progressNotifier.bind(href, emptyList(), session)
         val launchStartMs = System.currentTimeMillis()
         logcat(LogPriority.INFO) {
             "[TtsService] runPlaybackJob START extractedText.len=${extractedText?.length ?: -1} " +
@@ -816,26 +814,31 @@ class TtsService : Service(), CoroutineScope {
                 }
                 t
             }
-            if (text == null) {
+            if (text.isNullOrBlank()) {
                 logcat(LogPriority.WARN) {
-                    "[TtsService] chapter text extraction failed (chapterId=$chapterId, href=\"$href\") — falling back to test text"
+                    "[TtsService] chapter text extraction failed (chapterId=$chapterId)"
                 }
-                startForegroundForPlayback(buildNotification(extractFailed = true))
+                progressNotifier.notifyPlaybackFailed(session)
+                updateTtsPlaybackState(TtsPlaybackState.STOPPED)
+                stopSelf()
+                return
             }
-            val resolvedText = text ?: FALLBACK_TEXT
+            val resolvedText = text
             logcat(LogPriority.INFO) { "[TtsService] extracted ${resolvedText.length} chars; sentence-segmenting..." }
             val sentences = SentenceSegmenter.cut(chapterHref = href.ifBlank { "ch-fallback" }, text = resolvedText)
             logcat(LogPriority.INFO) { "[TtsService] ${sentences.size} sentences to play" }
 
             if (sentences.isEmpty()) {
                 logcat(LogPriority.WARN) { "[TtsService] no sentences to play" }
-                progressNotifier.bind(href, emptyList())
+                progressNotifier.notifyPlaybackFailed(session)
+                updateTtsPlaybackState(TtsPlaybackState.STOPPED)
                 stopSelf()
                 return
             }
 
             // 把句子列表广播给阅读器(Phase 2 句子级同步)
             progressNotifier.bind(
+                session = session,
                 chapterHref = href,
                 sentences = sentences.map {
                     koharia.tts.progress.TtsProgressNotifier.SentenceRef(
@@ -879,9 +882,9 @@ class TtsService : Service(), CoroutineScope {
 
             val prefetcher = SentencePrefetcher(
                 scope = playbackScope,
-                engine = engine,
+                engine = playbackEngine,
                 cache = cache,
-                voice = _voice.value,
+                voice = playbackVoice,
                 style = null,
             )
             this@TtsService.prefetcher = prefetcher
@@ -941,7 +944,7 @@ class TtsService : Service(), CoroutineScope {
                             "played=$played failed=$failed " +
                             "of ${sentences.size} sentences; not advancing chapter"
                     }
-                    progressNotifier.notifyPlaybackFailed()
+                    progressNotifier.notifyPlaybackFailed(session)
                     updateTtsPlaybackState(TtsPlaybackState.STOPPED)
                     stopSelf()
                     return
@@ -953,8 +956,11 @@ class TtsService : Service(), CoroutineScope {
             }
             // Phase 3：通知阅读器"章节自然播完"，让它自动续播下一章。
             // 不自毁 —— 交给 [scheduleCompletionStop] 的兜底窗口，等阅读器用新 start 接管。
-            progressNotifier.notifyChapterCompleted()
-            scheduleCompletionStop()
+            controlMutex.withLock {
+                completionPending = true
+                progressNotifier.notifyChapterCompleted(session)
+                scheduleCompletionStop()
+            }
         } catch (e: CancellationException) {
             // 取消是正常控制流（stop / skipTo）,不是错误 —— 不要打成 ERROR。
             throw e
@@ -1006,8 +1012,13 @@ class TtsService : Service(), CoroutineScope {
      */
     private fun scheduleCompletionStop() {
         completionStopJob?.cancel()
+        val session = progressNotifier.progress.value.session
         completionStopJob = playbackScope.launch {
             delay(AUTO_ADVANCE_GRACE_MS)
+            while (session != null && progressNotifier.pendingNavigation.value == session) {
+                progressNotifier.pendingNavigation.first { it != session }
+                delay(AUTO_ADVANCE_GRACE_MS)
+            }
             if (!currentCoroutineContext().isActive) return@launch
             logcat(LogPriority.INFO) {
                 "[TtsService] no auto-advance handover in ${AUTO_ADVANCE_GRACE_MS}ms; stopping"
@@ -1058,7 +1069,7 @@ class TtsService : Service(), CoroutineScope {
      *
      * 触发源：通知 prev/next 按钮、锁屏控件、蓝牙耳机 prev/next 键、MediaSession.onSkipTo*。
      */
-    private suspend fun skipTo(targetIndex: Int) {
+    private suspend fun skipTo(targetIndex: Int, preservePause: Boolean = false) {
         val args = lastPlaybackArgs
         if (args == null) {
             logcat(LogPriority.WARN) { "[TtsService] skipTo($targetIndex) ignored - no chapter args" }
@@ -1068,6 +1079,8 @@ class TtsService : Service(), CoroutineScope {
         logcat(LogPriority.INFO) { "[TtsService] skipTo current=$currentSentenceIndex -> target=$safeIndex" }
         // 关键:取消后等真正退出,避免 OLD job 与 NEW job 的 TtsPlayer worker 串扰。
         // 本函数经 [dispatchControl] 串行执行,不会与其它 skipTo/startPlayback 竞态。
+        completionStopJob?.cancel()
+        completionStopJob = null
         flushProgress()
         playbackJob?.cancelAndJoin()
         playbackJob = null
@@ -1080,7 +1093,7 @@ class TtsService : Service(), CoroutineScope {
         synchronized(sessionLock) {
             activeSessionGeneration = -1
             // skipTo() 不是 stop():保留 track.play() 状态,让 NEW PCM 立即发声
-            player.skipTo()
+            if (preservePause) player.startNewSession() else player.skipTo()
         }
         overrideStartIndex = safeIndex
         // 用同一章节参数重启,只换 overrideStartIndex
@@ -1454,19 +1467,10 @@ class TtsService : Service(), CoroutineScope {
          *   "读字节→Jsoup 解析"在远程 Komga / 大章节上经常 10+ 秒。
          */
         const val EXTRA_TEXT_TOKEN = "textToken"
+        private const val EXTRA_EXPECTED_SESSION_TOKEN = "expectedSessionToken"
         private const val DEFAULT_VOICE = "冰糖"
 
-        /**
-         * 进程级播放音色（Phase 3 step 3）。[observeVoicePreference] 写入，
-         * [startPlayback] 在构造 [SentencePrefetcher] 前读 `value`。
-         *
-         * 初始值与 [TtsPreferences.DEFAULT_VOICE_ID] 对齐，保证阅读器
-         * 还没 attach 时读 `_voice.value` 也能拿到合理默认。
-         *
-         * v0.4.2-63:音色已按 vendor 分槽(`tts_voice_id_<vendorId>`),此处初始值仍是 MiMo 的
-         * 冰糖;服务 `onCreate` 里 [observeVoicePreference] 会立刻吐出**当前 vendor** 的实际
-         * 音色,而 `startPlayback` 取 `_voice.value` 一定晚于 `onCreate`,所以届时必然正确。
-         */
+        /** Active synthesis voice, updated with the engine on the serialized control queue. */
         private val _voice = MutableStateFlow(TtsPreferences.DEFAULT_VOICE_ID)
         val voice: StateFlow<String> = _voice.asStateFlow()
 
@@ -1482,17 +1486,6 @@ class TtsService : Service(), CoroutineScope {
          */
         private const val AUTO_ADVANCE_GRACE_MS = 1_500L
 
-        /**
-         * Hardcoded fallback used when ChapterTextExtractor returns nothing
-         * (reader session already released, etc). Lets the user at least hear
-         * the TTS pipeline end-to-end.
-         */
-        private val FALLBACK_TEXT = """
-            欢迎使用 Koharia 朗读功能。这是一个测试朗读文本。
-            当前章节的文本提取失败，可能是因为阅读会话已经关闭。
-            请回到阅读页面后再试一次。
-        """.trimIndent()
-
         fun start(
             context: Context,
             chapterId: Long,
@@ -1504,8 +1497,10 @@ class TtsService : Service(), CoroutineScope {
             startOffset: Int,
             persistedSentenceText: String? = null,
             textToken: String? = null,
+            expectedSessionToken: String? = null,
         ) {
             val intent = Intent(context, TtsService::class.java).apply {
+                putExtra(EXTRA_EXPECTED_SESSION_TOKEN, expectedSessionToken)
                 putExtra(EXTRA_CHAPTER_ID, chapterId)
                 putExtra(EXTRA_MANGA_ID, mangaId)
                 putExtra(EXTRA_HREF, href)

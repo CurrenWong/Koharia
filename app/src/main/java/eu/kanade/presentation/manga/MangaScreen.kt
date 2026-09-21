@@ -1346,19 +1346,18 @@ private fun chapterTitle(
     manga: Manga,
     item: ChapterList.Item,
 ): String {
-    val providerTitle = (
-        Injekt.get<tachiyomi.domain.source.service.SourceManager>().get(
-            manga.source,
-        ) as? ConnectionChapterTitleAdapter
-        )
-        ?.detailsChapterTitle(item.chapter.memo)
-    return if (manga.displayMode == Manga.CHAPTER_DISPLAY_NUMBER) {
-        stringResource(
+    val adapter = Injekt.get<tachiyomi.domain.source.service.SourceManager>()
+        .get(manga.source) as? ConnectionChapterTitleAdapter
+    val memo = item.chapter.memo
+    val sourceTitle = adapter?.detailsChapterTitle(memo)
+        ?: item.chapter.name.withoutEmbeddedFileSize(memo)
+    return when (manga.displayMode) {
+        Manga.CHAPTER_DISPLAY_NUMBER -> adapter?.detailsChapterNumber(memo) ?: stringResource(
             MR.strings.display_mode_chapter,
             formatChapterNumber(item.chapter.chapterNumber),
         )
-    } else {
-        providerTitle ?: item.chapter.name.withoutEmbeddedFileSize(item.chapter.memo)
+        Manga.CHAPTER_DISPLAY_FILE_NAME -> adapter?.detailsChapterFileName(memo) ?: sourceTitle
+        else -> sourceTitle
     }
 }
 

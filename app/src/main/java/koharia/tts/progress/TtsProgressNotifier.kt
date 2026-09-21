@@ -27,6 +27,11 @@ import tachiyomi.core.common.util.system.logcat
  */
 class TtsProgressNotifier {
 
+    data class Session(val chapterId: Long, val mangaId: Long, val token: String) {
+        fun belongsTo(chapterId: Long, mangaId: Long): Boolean =
+            this.chapterId == chapterId && this.mangaId == mangaId && chapterId > 0 && mangaId > 0
+    }
+
     /**
      * 当前朗读的句子上下文。
      *
@@ -38,6 +43,7 @@ class TtsProgressNotifier {
         val chapterHref: String,
         val sentences: List<SentenceRef>,
         val currentIndex: Int,
+        val session: Session? = null,
     ) {
         /** 当前句的起始字符偏移（章节纯文本内），无当前句时返回 0。 */
         val currentStartOffset: Int
@@ -67,6 +73,18 @@ class TtsProgressNotifier {
         val endOffset: Int,
     )
 
+    private val _pendingNavigation = MutableStateFlow<Session?>(null)
+    val pendingNavigation: StateFlow<Session?> = _pendingNavigation.asStateFlow()
+
+    @Synchronized
+    fun setNavigationPending(session: Session, pending: Boolean) {
+        if (pending && _progress.value.session == session) {
+            _pendingNavigation.value = session
+        } else if (!pending && _pendingNavigation.value == session) {
+            _pendingNavigation.value = null
+        }
+    }
+
     private val _progress = MutableStateFlow(Progress("", emptyList(), -1))
 
     /** 当前进度的只读视图。 */
@@ -79,15 +97,17 @@ class TtsProgressNotifier {
      * 用 [MutableSharedFlow]（无 replay）而非 StateFlow：这是"一次性事件"，
      * 不应在阅读器重新订阅时被重放。buffer=1 + [tryEmit]，发送方永不挂起。
      */
-    private val _chapterCompleted = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val _chapterCompleted = MutableSharedFlow<Session>(extraBufferCapacity = 1)
 
     /** 章节自然播完事件流。 */
-    val chapterCompleted: SharedFlow<Unit> = _chapterCompleted.asSharedFlow()
+    val chapterCompleted: SharedFlow<Session> = _chapterCompleted.asSharedFlow()
 
     /** 发出"章节自然播完"事件；无人订阅时静默丢弃。 */
-    fun notifyChapterCompleted() {
+    @Synchronized
+    fun notifyChapterCompleted(session: Session) {
+        if (_progress.value.session != session) return
         logcat(LogPriority.INFO) { "[TtsProgressNotifier] notifyChapterCompleted" }
-        _chapterCompleted.tryEmit(Unit)
+        _chapterCompleted.tryEmit(session)
     }
 
     /**
@@ -96,15 +116,17 @@ class TtsProgressNotifier {
      * 与 [chapterCompleted] 互斥：失败时**绝不**发 chapterCompleted，避免阅读器在没有任何
      * 声音的情况下连续跳章。阅读器订阅后提示用户（具体文案由 UI 层从资源解析）。
      */
-    private val _playbackFailed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val _playbackFailed = MutableSharedFlow<Session>(extraBufferCapacity = 1)
 
     /** 播放失败（未产生任何音频）事件流。 */
-    val playbackFailed: SharedFlow<Unit> = _playbackFailed.asSharedFlow()
+    val playbackFailed: SharedFlow<Session> = _playbackFailed.asSharedFlow()
 
     /** 发出"本章未产生任何音频"事件；无人订阅时静默丢弃。 */
-    fun notifyPlaybackFailed() {
+    @Synchronized
+    fun notifyPlaybackFailed(session: Session) {
+        if (_progress.value.session != session) return
         logcat(LogPriority.WARN) { "[TtsProgressNotifier] notifyPlaybackFailed" }
-        _playbackFailed.tryEmit(Unit)
+        _playbackFailed.tryEmit(session)
     }
 
     /**
@@ -112,14 +134,16 @@ class TtsProgressNotifier {
      * 重置 currentIndex 为 0；TtsService 在确定真实起点后会调用 [setCurrent] 覆盖。
      */
     @Synchronized
-    fun bind(chapterHref: String, sentences: List<SentenceRef>) {
+    fun bind(chapterHref: String, sentences: List<SentenceRef>, session: Session) {
         logcat(LogPriority.INFO) {
             "[TtsProgressNotifier] bind chapterHref='$chapterHref' size=${sentences.size}"
         }
+        if (_progress.value.session != session) _pendingNavigation.value = null
         _progress.value = Progress(
             chapterHref = chapterHref,
             sentences = sentences,
             currentIndex = if (sentences.isEmpty()) -1 else 0,
+            session = session,
         )
     }
 
@@ -147,6 +171,7 @@ class TtsProgressNotifier {
     /** 重置为空状态（朗读停止 / 章节切换）。 */
     @Synchronized
     fun clear() {
+        _pendingNavigation.value = null
         _progress.value = Progress("", emptyList(), -1)
     }
 

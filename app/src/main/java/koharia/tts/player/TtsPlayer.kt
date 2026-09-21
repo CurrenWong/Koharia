@@ -139,6 +139,9 @@ class TtsPlayer(
      */
     private val playbackStateLock = Any()
 
+    // When both are needed, acquire playbackStateLock before pcmWriteLock.
+    private val pcmWriteLock = Any()
+
     /**
      * Phase 3 step 1：暂停开关。`true` 时 worker 在 [runLoop] 的 pause 闸门阻塞，
      * 已入队但未消费的 clip 留在 [queue] 里；`pause()`/`play()` 同时切 AudioTrack 输出。
@@ -167,18 +170,6 @@ class TtsPlayer(
     private var volume: Float = 1.0f
 
     private val framesWritten = AtomicLong(0L)
-
-    /**
-     * [framesWritten] 的基准：最近一次会话边界（[resetForNewSession] / [stop] / 新 track）时的
-     * `playbackHeadPosition`。
-     *
-     * review ocr：`AudioTrack.flush()` **不重置** `playbackHeadPosition`，而 [framesWritten] 是
-     * 相对计数、每次会话边界归零。若直接比较二者，从第二章起 `head`（累计）恒 ≥ `written`
-     * （相对），[awaitDrained] 会在音频尚未播完时立即返回 —— `notifyChapterCompleted()` 提前
-     * 触发，紧接着的新会话 flush 会**截断本章尾部音频**。
-     * 改为比较 `head - headBaseline` 与 `written`，让两者同基准。
-     */
-    private val headBaseline = AtomicLong(0L)
 
     private val trackRef = AtomicReference<AudioTrack?>(null)
 
@@ -237,33 +228,22 @@ class TtsPlayer(
      * 立即停止：丢弃未播的队列与已写入未播放的缓冲。
      */
     fun stop() {
-        stopped.set(true)
-        paused.set(false)
-        // review P2 round 3:stop 关闭当前会话,推进代次 —— 任何在解码/写 PCM 中的旧 worker
-        // 都会在下次 check 时放弃,避免后续 enqueue 重启时把已停的会话误当作同一会话。
-        generation.invalidate()
-        queue.clear()
-        resetFrameAccounting()
-        trackRef.get()?.let { track ->
-            runCatching { track.pause() }
-            runCatching { track.flush() }
+        synchronized(playbackStateLock) {
+            synchronized(pcmWriteLock) {
+                stopped.set(true)
+                paused.set(false)
+                generation.invalidate()
+                queue.clear()
+                trackRef.get()?.let { track ->
+                    runCatching { track.pause() }
+                    runCatching { track.flush() }
+                }
+                resetFrameAccounting()
+            }
         }
     }
 
-    /**
-     * 重置写入帧计数并记录当前播放头为基准（review ocr）。
-     *
-     * `AudioTrack.flush()` 不重置 `playbackHeadPosition`，所以归零 [framesWritten] 时必须同时
-     * 记录 [headBaseline]，否则 [awaitDrained] 的 `head >= written` 会在音频未播完时提前成立。
-     *
-     * review ocr finding 3：**必须在 track 已暂停后**调用 —— 否则快照与 pause 落地之间播放的
-     * δ 帧会被算进新会话，`head >= written` 提前 δ 帧成立，下一次 flush 会截掉章节尾部 δ 帧。
-     */
     private fun resetFrameAccounting() {
-        val baseline = trackRef.get()
-            ?.let { track -> runCatching { track.playbackHeadPosition.toLong() }.getOrDefault(0L) }
-            ?: 0L
-        headBaseline.set(baseline)
         framesWritten.set(0L)
     }
 
@@ -302,40 +282,25 @@ class TtsPlayer(
         resetForNewSession(clearPause = true)
     }
 
-    /**
-     * [skipTo] / [startNewSession] 共用的会话重置：
-     * 1. `stopped = true` → worker 丢弃当前 clip；
-     * 2. （可选）清除暂停意图：仅 [skipTo] 传 `true`；
-     * 3. `generation.invalidate()` → 所有已入队/在途 clip 的代次立即失效，`writePcm` 循环
-     *    与回调据此放弃（review P2 round 3）；
-     * 4. `pause → 取 head 基准 → flush → 播放` → 清 AudioTrack 里已缓冲的旧 PCM，
-     *    但**保持播放状态**（不能用 [stop]：它把 track 留在 PAUSED，导致新 PCM 写入后听不见）。
-     *
-     * 步骤顺序有讲究：先 `pause()` 让播放头停住，再 `resetFrameAccounting()` 取基准
-     * （review ocr finding 3），最后才 `flush()`。
-     */
-    private fun resetForNewSession(clearPause: Boolean): Int {
-        stopped.set(true)
-        if (clearPause) paused.set(false)
-        val newGeneration = generation.invalidate()
-        queue.clear()
-        val track = trackRef.get()
-        if (track != null) {
-            // 先 pause（播放头停住）再取基准，避免 δ 帧被计入新会话（finding 3）。
-            runCatching { track.pause() }
+    /** Invalidates queued clips and flushes the track while preserving the requested pause state. */
+    private fun resetForNewSession(clearPause: Boolean): Int = synchronized(playbackStateLock) {
+        synchronized(pcmWriteLock) {
+            stopped.set(true)
+            if (clearPause) paused.set(false)
+            val newGeneration = generation.invalidate()
+            queue.clear()
+            val track = trackRef.get()
+            if (track != null) {
+                runCatching { track.pause() }
+                runCatching { track.flush() }
+            }
             resetFrameAccounting()
-            runCatching { track.flush() }
-            // 保留暂停意图时不恢复播放：否则换章会覆盖用户/焦点丢失造成的暂停（finding 5）。
-            if (!paused.get()) {
+            if (track != null && !paused.get()) {
                 runCatching { track.play() }
-                // Phase 3 step 2：pause→play 后重新套用语速（保持 time-stretch 生效）。
                 applyPlaybackParams(track)
             }
-        } else {
-            // 尚无 track：仍要归零计数与基准，供 [ensureTrack] 之后的比较使用。
-            resetFrameAccounting()
+            newGeneration
         }
-        return newGeneration
     }
 
     /**
@@ -468,21 +433,8 @@ class TtsPlayer(
         }
         if (stopped.get() || released) return
         logcat(LogPriority.DEBUG) { "[TtsPlayer] awaitDrained: worker drained all clips, waiting playback head" }
-        // 第三阶段：等播放头追上写入帧数（真正发声完毕）。
-        //
-        // ⚠️ **必须有界**。`playbackHeadPosition` 与 [framesWritten] 的基准会在
-        // [skipTo]/[stop] 的 `flush()` 后错位：flush 丢弃未播数据却**不重置播放头**，
-        // 于是 written 可能永远比 head 大出一大截。无界等待会让 [awaitDrained] 永久挂住
-        // → `playback complete` 打不出来 → `notifyChapterCompleted()` 不触发
-        // → **自动续章失效 + 服务静默停住**。
-        //
-        // 真机证据：head 冻结在 266256 而 written=312336，差值 46080 帧（1.92s，远大于
-        // 400ms 缓冲），永远追不上。
-        //
-        // 因此改用"播放头是否还在前进"作为主判据，并加双重上限：
-        //   - [DRAIN_STALL_ROUNDS]：播放头连续 ~1s 不动 ⟹ 音频确已放完（或 track 已死）
-        //   - [DRAIN_MAX_ROUNDS]：整体上限，防止缓慢前进导致的超长等待
-        // 暂停期间播放头本来就不动，不计入停滞判定，继续等（resume 后会自动恢复前进）。
+        // Wait for playback to consume the written frames; bound waits for an unresponsive track.
+        // Paused time does not count toward the stall limit.
         var lastHead = -1L
         var stalledRounds = 0
         var drainRounds = 0
@@ -496,14 +448,10 @@ class TtsPlayer(
             }
             val track = trackRef.get() ?: return
             val written = framesWritten.get()
-            // review ocr：扣掉会话边界时的基准，才能与相对计数的 [framesWritten] 同基准比较
-            // （flush 不重置 playbackHeadPosition）。
-            val rawHead = track.playbackHeadPosition.toLong()
-            val head = (rawHead - headBaseline.get()).coerceAtLeast(0L)
+            val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
             if (written == 0L || head >= written) {
                 logcat(LogPriority.DEBUG) {
-                    "[TtsPlayer] awaitDrained: done head=$head (raw=$rawHead base=${headBaseline.get()}) " +
-                        "written=$written"
+                    "[TtsPlayer] awaitDrained: done head=$head written=$written"
                 }
                 return
             }
@@ -538,11 +486,12 @@ class TtsPlayer(
 
     fun release() {
         if (released) return
-        released = true
-        // review P2 round 3:释放同样作废会话 —— 在解码/写 PCM 的 worker 立即放弃。
-        generation.invalidate()
-        queue.clear()
-        queue.offer(POISON)
+        synchronized(pcmWriteLock) {
+            released = true
+            generation.invalidate()
+            queue.clear()
+            queue.offer(POISON)
+        }
         if (workerStarted) {
             runCatching { worker.join(WORKER_JOIN_MS) }
             if (worker.isAlive) worker.interrupt()
@@ -551,10 +500,12 @@ class TtsPlayer(
     }
 
     private fun releaseTrack() {
-        trackRef.getAndSet(null)?.let { track ->
-            runCatching { track.pause() }
-            runCatching { track.flush() }
-            runCatching { track.release() }
+        synchronized(pcmWriteLock) {
+            trackRef.getAndSet(null)?.let { track ->
+                runCatching { track.pause() }
+                runCatching { track.flush() }
+                runCatching { track.release() }
+            }
         }
     }
 
@@ -712,11 +663,9 @@ class TtsPlayer(
                 }
                 return false
             }
-            if (writtenBytes <= 0) {
-                // 解码成功但一个字节都没写进 AudioTrack（厂商返回 HTTP 200 正文却不是音频、
-                // MP3 损坏、track 不可用…）—— 这一句**没有声音**，不能算"已发声"。
+            if (trimmed.isEmpty() || writtenBytes != trimmed.size) {
                 logcat(LogPriority.WARN) {
-                    "[TtsPlayer] clip $index produced no PCM; not counted as played"
+                    "[TtsPlayer] clip $index incomplete PCM write=$writtenBytes/${trimmed.size}; not counted as played"
                 }
                 return false
             }
@@ -794,58 +743,27 @@ class TtsPlayer(
         }
     }
 
-    /**
-     * 写入 PCM 到 AudioTrack。
-     *
-     * ⚠️ 用 [AudioTrack.WRITE_NON_BLOCKING] 轮询，**不要**用阻塞式 `write`。
-     *
-     * 阻塞式 `write` 在缓冲满时挂进内核等待，只有**另一个线程**调 `pause()`/`flush()`
-     * 才能唤醒它。一旦服务端 track 出问题（设备切换、flush 后未重新挂载、被系统回收），
-     * 它会**永久挂死**，而 `writePcm` 没有超时也感知不到 [stopped]/[released]：
-     *
-     *   挂死 → `pumpClip` 永不返回 → `awaitDrained()` 的 [DrainBarrier] 永不被消费
-     *        → `playback complete` 不打印 → `notifyChapterCompleted()` 不触发
-     *        → **自动续章失效 + 服务静默停住**
-     *
-     * 真机证据：`koharia-tts-player` 线程 utime/stime 5 秒零增长（完全阻塞，非空转），
-     * `dumpsys audio` 显示该 track `state:started` 却不再排空。
-     *
-     * 非阻塞轮询让这里能感知 [stopped]/[released] 并主动退出，不会把播放协程拖死。
-     */
-    private fun writePcm(track: AudioTrack, bytes: ByteArray, sessionGeneration: Int): Int {
-        var written = 0
-        var idleRounds = 0
-        // review P2 round 3:writePcm 循环也要感知代次变化。skipTo 推进 generation 后,
-        // 旧 worker 阻塞的 sleep 醒来必须立即退出 —— 否则会把上一句的剩余 PCM 写入
-        // 已 flush 的 AudioTrack,污染新会话。
-        while (written < bytes.size && !stopped.get() && !released && generation.isValid(sessionGeneration)) {
-            val result = runCatching {
-                track.write(bytes, written, bytes.size - written, AudioTrack.WRITE_NON_BLOCKING)
-            }.getOrDefault(-1)
-            if (result < 0) {
-                logcat(LogPriority.WARN) {
-                    "[TtsPlayer] writePcm aborted result=$result written=$written/${bytes.size}"
-                }
-                break
-            }
-            if (result == 0) {
-                // 缓冲已满，等音频排空。只在进入等待时打一条，避免刷屏。
-                if (idleRounds == 0) {
-                    logcat(LogPriority.DEBUG) {
-                        "[TtsPlayer] writePcm buffer full, draining: written=$written/${bytes.size} " +
-                            "headMs=${playbackHeadMs()} framesWritten=${framesWritten.get()}"
+    /** Non-blocking writes let stop and session changes interrupt a full output buffer. */
+    private fun writePcm(track: AudioTrack, bytes: ByteArray, sessionGeneration: Int): Int = writePcmFully(
+        bytes = bytes,
+        frameBytes = SAMPLE_BYTES_PER_CHANNEL.toInt() * currentChannels.coerceAtLeast(1),
+        sink = { buffer, offset, size ->
+            synchronized(pcmWriteLock) {
+                if (stopped.get() || released || !generation.isValid(sessionGeneration) || trackRef.get() !== track) {
+                    -1
+                } else {
+                    val accepted = track.write(buffer, offset, size, AudioTrack.WRITE_NON_BLOCKING)
+                    val frameBytes = SAMPLE_BYTES_PER_CHANNEL * currentChannels.coerceAtLeast(1)
+                    if (accepted > 0 && accepted <= size && accepted % frameBytes == 0L) {
+                        framesWritten.addAndGet(accepted / frameBytes)
                     }
+                    accepted
                 }
-                idleRounds++
-                runCatching { Thread.sleep(WRITE_POLL_MS) }
-                continue
             }
-            idleRounds = 0
-            written += result
-        }
-        framesWritten.addAndGet(written.toLong() / BYTES_PER_FRAME)
-        return written
-    }
+        },
+        shouldContinue = { !stopped.get() && !released && generation.isValid(sessionGeneration) },
+        waitForCapacity = { Thread.sleep(WRITE_POLL_MS) },
+    )
 
     /**
      * 诊断用：AudioTrack 播放头已播出的毫秒数（-1 = 不可用）。
@@ -865,9 +783,12 @@ class TtsPlayer(
         // Phase 3 step 2：track 开启 time-stretch 后，输出时长 = 输入时长 / speed。
         // 若原样写 interSentenceGapMs，0.5x 时停顿会拉长一倍、2x 时缩短一半；
         // 这里按 speed 反向放大输入静音，使**听感上的句间停顿恒为 interSentenceGapMs**。
-        val gapMs = interSentenceGapMs * speed
-        val silenceBytes =
-            (currentSampleRate * currentChannels * SAMPLE_BYTES_PER_CHANNEL * gapMs / 1000f).toInt()
+        val silenceBytes = silencePcmByteCount(
+            sampleRate = currentSampleRate,
+            channels = currentChannels,
+            gapMs = interSentenceGapMs,
+            speed = speed,
+        )
         if (silenceBytes <= 0) return
         writePcm(track, ByteArray(silenceBytes), sessionGeneration)
     }
@@ -923,7 +844,12 @@ class TtsPlayer(
                 //  - 读 `paused` 与作用到 track 分开：同样会与 `play()` 交错出上述不一致。
                 // 与 [pause]/[play] 共用 [playbackStateLock] 保证二者不可分割。
                 synchronized(playbackStateLock) {
-                    trackRef.set(it)
+                    synchronized(pcmWriteLock) {
+                        trackRef.set(it)
+                        currentSampleRate = sampleRate
+                        currentChannels = channels
+                        resetFrameAccounting()
+                    }
                     // 尊重已记录的暂停意图：换章窗口里 worker 可能已越过 `runLoop` 的暂停闸门
                     // 并阻塞在 `queue.take()`，此刻 `trackRef` 还是 null（`pause()` 无从作用），
                     // 首句一到就建 track；若无条件 `play()`，用户按了暂停首句仍会外放（finding 6）。
@@ -936,11 +862,6 @@ class TtsPlayer(
                         if (volume == target) break
                     }
                 }
-                currentSampleRate = sampleRate
-                currentChannels = channels
-                // 新 track 的 playbackHeadPosition 从 0 开始：基准归零 + 写入计数归零。
-                headBaseline.set(0L)
-                framesWritten.set(0L)
                 // Phase 3 step 2：track 进入 PLAYING 后才能设 playback params（time-stretch）。
                 // pause 状态下 setPlaybackParams 可能失败（内部 runCatching），resume 时会重套。
                 applyPlaybackParams(it)
@@ -963,7 +884,6 @@ class TtsPlayer(
         const val INPUT_TIMEOUT_US = 10_000L
         const val OUTPUT_TIMEOUT_US = 10_000L
         const val DEFAULT_SAMPLE_RATE = 24_000
-        const val BYTES_PER_FRAME = 2L
         const val BUFFER_SIZE_MULTIPLIER = 2
 
         /** Phase 3 step 2：语速范围（与 [koharia.tts.TtsPreferences] 的取值域对齐）。 */

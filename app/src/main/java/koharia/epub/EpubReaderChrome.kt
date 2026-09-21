@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -54,6 +53,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -67,10 +70,15 @@ import eu.kanade.presentation.reader.components.ChapterNavigatorType
 import eu.kanade.tachiyomi.ui.reader.setting.EpubReaderToolbarAction
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import koharia.domain.epub.model.EpubBookmark
+import koharia.epub.control.TtsControlPanel
+import koharia.epub.control.TtsPanelState
 import koharia.epub.model.EpubTocEntry
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
 import koharia.epub.settings.EpubReaderSettingsContent
+import koharia.epub.settings.TtsReaderSettingsSheet
+import koharia.tts.TtsAction
+import koharia.tts.TtsPlaybackState
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.motion.EInkAnimatedVisibility
@@ -184,6 +192,8 @@ internal fun EpubReaderBottomArea(
     onOpenBrightness: () -> Unit,
     onSearch: (() -> Unit)?,
     onToggleTts: (() -> Unit)?,
+    ttsPanelState: TtsPanelState = TtsPanelState(false, TtsPlaybackState.STOPPED),
+    onTtsAction: (TtsAction) -> Unit = {},
     onToggleOrientation: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleMore: () -> Unit,
@@ -191,6 +201,10 @@ internal fun EpubReaderBottomArea(
     morePanel: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showTtsSettings by remember { mutableStateOf(false) }
+    if (showTtsSettings) {
+        TtsReaderSettingsSheet(onDismissRequest = { showTtsSettings = false })
+    }
     val backgroundColor = MaterialTheme.colorScheme
         .surfaceColorAtElevation(3.dp)
         .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
@@ -221,9 +235,17 @@ internal fun EpubReaderBottomArea(
                         ?: "${(progression * 100).roundToInt().coerceIn(0, 100)}%",
                     displayTotalText = visualPagePair?.second?.toString().orEmpty(),
                 )
+                if (ttsPanelState.shouldRender) {
+                    TtsControlPanel(
+                        panelState = ttsPanelState,
+                        onAction = onTtsAction,
+                        onOpenSettings = { showTtsSettings = true },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
                 EInkAnimatedVisibility(
                     visible = activePanel != EpubBottomPanel.NONE,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = if (ttsPanelState.shouldRender) 0.dp else 8.dp),
                     enter = expandVertically(
                         animationSpec = tween(200),
                         expandFrom = Alignment.Bottom,
@@ -267,7 +289,15 @@ internal fun EpubReaderBottomArea(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = if (activePanel == EpubBottomPanel.NONE) 8.dp else 0.dp)
+                        .padding(
+                            top = if (activePanel == EpubBottomPanel.NONE &&
+                                !ttsPanelState.shouldRender
+                            ) {
+                                8.dp
+                            } else {
+                                0.dp
+                            },
+                        )
                         .background(backgroundColor)
                         .padding(horizontal = 8.dp)
                         .windowInsetsPadding(WindowInsets.navigationBars),
@@ -319,6 +349,7 @@ internal fun EpubReaderBottomArea(
                                 onClick = { onSearch?.invoke() },
                             )
                             EpubReaderToolbarAction.TTS -> EpubActionButton(
+                                selected = ttsPanelState.active,
                                 enabled = onToggleTts != null,
                                 icon = {
                                     Icon(
@@ -344,15 +375,6 @@ internal fun EpubReaderBottomArea(
                             )
                         }
                     }
-                    EpubActionButton(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = stringResource(MR.strings.tts_listen),
-                            )
-                        },
-                        onClick = onToggleTts ?: {},
-                    )
                     EpubActionButton(
                         icon = {
                             Icon(

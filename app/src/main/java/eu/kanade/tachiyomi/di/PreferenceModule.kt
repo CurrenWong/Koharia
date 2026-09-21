@@ -145,7 +145,7 @@ class PreferenceModule(val app: Application) : InjektModule {
             EntryOpenPreferences(get<PreferenceStore>())
         }
         addSingletonFactory {
-            TtsPreferences(get<PreferenceStore>())
+            TtsPreferences(get<ScopedPreferenceStore>())
         }
     }
 }

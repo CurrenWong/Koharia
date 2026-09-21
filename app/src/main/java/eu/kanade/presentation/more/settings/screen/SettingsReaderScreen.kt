@@ -24,6 +24,7 @@ import koharia.epub.settings.EpubBackgroundSettingsPreference
 import koharia.epub.settings.EpubFontPreference
 import koharia.epub.settings.EpubLayoutPreferences
 import koharia.epub.settings.EpubReaderPreferences
+import koharia.tts.ui.settings.TtsSettingsScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableList
@@ -170,12 +171,19 @@ object SettingsReaderScreen : SearchableSettings {
         epubReaderPreferences: EpubReaderPreferences,
         epubLayoutPreferences: EpubLayoutPreferences,
     ): List<Preference> {
+        val navigator = LocalNavigator.currentOrThrow
         return listOf(
             getEpubReaderGroup(epubReaderPreferences),
             getEpubReadingModeGroup(readerPreferences, epubLayoutPreferences),
             getEpubTypographyGroup(readerPreferences, epubLayoutPreferences),
             getEpubNavigationGroup(readerPreferences, epubLayoutPreferences),
             getEpubImageDisplayGroup(epubLayoutPreferences),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.tts_engine_settings_title),
+                subtitle = stringResource(MR.strings.tts_engine_open_settings),
+                onClick = { navigator.push(TtsSettingsScreen) },
+            ),
+
         )
     }
 
@@ -542,6 +550,11 @@ object SettingsReaderScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.showReaderClock,
                     title = stringResource(MR.strings.reader_status_show_clock),
+                    enabled = showStatus,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.showReaderPages,
+                    title = stringResource(MR.strings.reader_status_show_pages),
                     enabled = showStatus,
                 ),
                 Preference.PreferenceItem.SwitchPreference(

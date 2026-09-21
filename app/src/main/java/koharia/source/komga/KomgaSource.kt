@@ -195,10 +195,6 @@ class KomgaSource(
 
     private val chapterNameTemplate: String
         get() = preferences.getString(PREF_CHAPTER_NAME_TEMPLATE, PREF_CHAPTER_NAME_TEMPLATE_DEFAULT)!!
-    private val chapterTitleMode: KomgaChapterTitleMode
-        get() = KomgaChapterTitleMode.entries.firstOrNull {
-            it.name == preferences.getString(PREF_CHAPTER_TITLE_MODE, null)
-        } ?: KomgaChapterTitleMode.FORMATTED
 
     private val searchCapabilities = KomgaSearchCapabilities(
         readLegacy = {
@@ -461,8 +457,13 @@ class KomgaSource(
         Injekt.get<TrackerManager>().komga.api.invalidateProgressCache(id)
     }
 
+    override fun detailsChapterNumber(chapterMemo: kotlinx.serialization.json.JsonObject): String? =
+        KomgaChapterMemo.number(chapterMemo)
+
+    override fun detailsChapterFileName(chapterMemo: kotlinx.serialization.json.JsonObject): String? =
+        KomgaChapterMemo.fileName(chapterMemo)
+
     override fun detailsChapterTitle(chapterMemo: kotlinx.serialization.json.JsonObject): String? {
-        if (chapterTitleMode != KomgaChapterTitleMode.SOURCE_TITLE) return null
         return KomgaChapterMemo.readFingerprint(chapterMemo)?.bookTitle?.takeIf(String::isNotBlank)
     }
 
@@ -1266,20 +1267,6 @@ class KomgaSource(
             default = PREF_CHAPTER_NAME_TEMPLATE_DEFAULT,
             dialogMessage = screen.context.stringResource(MR.strings.komga_pref_chapter_name_template_dialog),
         )
-        androidx.preference.ListPreference(screen.context).apply {
-            key = PREF_CHAPTER_TITLE_MODE
-            title = screen.context.stringResource(MR.strings.komga_chapter_title_mode)
-            entries = arrayOf(
-                screen.context.stringResource(MR.strings.komga_chapter_title_formatted),
-                screen.context.stringResource(MR.strings.komga_chapter_title_source),
-            )
-            entryValues = arrayOf(
-                KomgaChapterTitleMode.FORMATTED.name,
-                KomgaChapterTitleMode.SOURCE_TITLE.name,
-            )
-            setDefaultValue(KomgaChapterTitleMode.FORMATTED.name)
-            summary = "%s"
-        }.also(screen::addPreference)
     }
 
     suspend fun getBrowseLibraries(forceRefresh: Boolean = false): List<LibraryDto> {
@@ -1696,9 +1683,6 @@ private const val AUTH_MODE_API_KEY = "ApiKey"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
 private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({size})"
-private const val PREF_CHAPTER_TITLE_MODE = "chapter_title_mode"
-
-private enum class KomgaChapterTitleMode { FORMATTED, SOURCE_TITLE }
 private const val PREF_PERSISTENT_FILTERS_ENABLED = "Persistent filters enabled"
 private const val PREF_PERSISTENT_FILTERS_ENABLED_COMIC = "Persistent filters enabled comic"
 private const val PREF_PERSISTENT_FILTERS_ENABLED_BOOK = "Persistent filters enabled book"

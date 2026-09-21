@@ -51,10 +51,7 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
         },
     )
 
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_show_page_number),
-        pref = screenModel.preferences.showPageNumber,
-    )
+    ReaderStatusSettings(screenModel.preferences)
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_show_buffering_speed),

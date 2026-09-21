@@ -189,6 +189,7 @@ object SettingsLibraryScreen : SearchableSettings {
         val displayChapterByNameOrNumberEntries = persistentMapOf(
             Manga.CHAPTER_DISPLAY_NAME to stringResource(MR.strings.show_title),
             Manga.CHAPTER_DISPLAY_NUMBER to stringResource(MR.strings.show_chapter_number),
+            Manga.CHAPTER_DISPLAY_FILE_NAME to stringResource(MR.strings.show_original_file_name),
         )
         val displayChapterByNameOrNumber by libraryPreferences.displayChapterByNameOrNumber.collectAsState()
         val chapterCoverDisplayModeEntries = persistentMapOf(

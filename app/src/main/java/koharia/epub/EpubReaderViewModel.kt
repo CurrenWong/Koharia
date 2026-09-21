@@ -69,8 +69,11 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -164,7 +167,7 @@ class EpubReaderViewModel @JvmOverloads constructor(
     val state = mutableState.asStateFlow()
 
     // Phase 3: TTS 章节自然播完事件（转发自 TtsProgressNotifier）。
-    val ttsChapterCompleted: SharedFlow<Unit> = ttsProgressNotifier.chapterCompleted
+    val ttsChapterCompleted: SharedFlow<TtsProgressNotifier.Session> = ttsProgressNotifier.chapterCompleted
 
     private val mutableImageState = MutableStateFlow(EpubImageUiState())
     internal val imageState = mutableImageState.asStateFlow()
@@ -294,15 +297,18 @@ class EpubReaderViewModel @JvmOverloads constructor(
         }
         // Phase 2.5a: TTS 句子进度广播 → UiState (source of truth 是 notifier 的 StateFlow)
         viewModelScope.launch {
-            ttsProgressNotifier.progress.collect { progress ->
+            ttsProgressNotifier.progress.combine(
+                state.map { it.chapterId to it.mangaId }.distinctUntilChanged(),
+            ) { progress, (chapterId, mangaId) ->
+                progress.takeIf { it.session?.belongsTo(chapterId, mangaId) == true }
+            }.collect { progress ->
                 logcat(LogPriority.INFO) {
-                    "[EpubReaderViewModel] ttsProgress emit chapterHref='${progress.chapterHref}' " +
-                        "currentIndex=${progress.currentIndex} size=${progress.sentences.size}"
+                    "[EpubReaderViewModel] ttsProgress index=${progress?.currentIndex}"
                 }
                 mutableState.update {
                     it.copy(
                         ttsProgress = progress,
-                        ttsActive = progress.toTtsHighlightBinding().active,
+                        ttsActive = progress?.toTtsHighlightBinding()?.active == true,
                     )
                 }
             }
@@ -323,8 +329,14 @@ class EpubReaderViewModel @JvmOverloads constructor(
      * Composable 只回调到 VM，不直接碰 [android.content.Context]。
      */
     fun onTtsAction(action: TtsAction) {
+        val session = ttsProgressNotifier.progress.value.session ?: return
+        if (!session.belongsTo(state.value.chapterId, state.value.mangaId)) return
         TtsService.dispatch(application, action)
     }
+
+    fun isCurrentTtsSession(session: TtsProgressNotifier.Session): Boolean =
+        session.belongsTo(state.value.chapterId, state.value.mangaId) &&
+            ttsProgressNotifier.progress.value.session == session
 
     fun needsInit(): Boolean = !state.value.isLoading && !state.value.isReady
 

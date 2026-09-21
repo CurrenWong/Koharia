@@ -12,14 +12,27 @@ class ReaderCommonPreferencesTest {
         val store = InMemoryPreferenceStore()
         val preferences = ReaderPreferences(store)
 
-        assertFalse(preferences.showPageNumber.get())
+        assertTrue(preferences.showPageNumber.get())
         assertEquals(ReaderStatusPosition.BOTTOM, preferences.readerStatusPosition.get())
         assertTrue(preferences.showReaderChapterTitle.get())
         assertTrue(preferences.showReaderClock.get())
         assertTrue(preferences.showReaderBattery.get())
+        assertTrue(preferences.showReaderPages.get())
+        preferences.showReaderChapterTitle.set(false)
+        preferences.showReaderPages.set(false)
+        assertFalse(preferences.showReaderChapterTitle.get())
+        assertFalse(preferences.showReaderPages.get())
+        assertTrue(preferences.showReaderClock.get())
+        assertTrue(preferences.showReaderBattery.get())
 
-        preferences.showPageNumber.set(true)
-        assertTrue(preferences.showPageNumber.get())
+        preferences.showPageNumber.set(false)
+        assertFalse(preferences.showPageNumber.get())
+        val existing = InMemoryPreferenceStore(
+            sequenceOf(
+                InMemoryPreferenceStore.InMemoryPreference("pref_show_page_number_key", false, false),
+            ),
+        )
+        assertFalse(ReaderPreferences(existing).showPageNumber.get())
     }
 
     @Test

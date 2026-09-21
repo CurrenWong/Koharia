@@ -20,6 +20,8 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class TtsViewModelBridgeTest {
 
+    private val session = TtsProgressNotifier.Session(chapterId = 1, mangaId = 1, token = "session-1")
+
     private fun makeSentences(vararg ends: Int): List<TtsProgressNotifier.SentenceRef> =
         ends.mapIndexed { i, end ->
             val start = if (i == 0) 0 else ends[i - 1]
@@ -130,7 +132,7 @@ class TtsViewModelBridgeTest {
         notifier.progress.first().toTtsHighlightBinding().active shouldBe false
 
         // bind 后：第一句
-        notifier.bind("ch1", makeSentences(5, 10))
+        notifier.bind("ch1", makeSentences(5, 10), session)
         val bound = notifier.progress.first()
         bound.toTtsHighlightBinding().let {
             it.active shouldBe true
